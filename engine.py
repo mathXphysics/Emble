@@ -736,6 +736,7 @@ def piece_type(piece):
 def inside(r, c):
     return 0 <= r < 8 and 0 <= c < 8
 
+
 def get_attackers(board, square):
     white = []
     black = []
