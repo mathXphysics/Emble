@@ -139,8 +139,7 @@ def all_moves(board):
         target_inhalt = board[target[0]][target[1]]
 
         is_king = piece == "-K"
-        is_pinned = start in pinned
-        if start in pinned:
+        if not is_king and start in pinned:
             if target not in pinned[start]:
                 continue
 
@@ -212,8 +211,7 @@ def all_moves_white(board):
         target_inhalt = board[target[0]][target[1]]
 
         is_king = piece == "K"
-        is_pinned = start in pinned
-        if start in pinned:
+        if not is_king and start in pinned:
             if target not in pinned[start]:
                 continue
 
@@ -259,57 +257,57 @@ def bewerte_material(board):
         for col in range(8):
             if board[row][col] == "B":
                 material -= 1
-                material -= piece_square_table_pawn[row][col] / 50
+                material -= piece_square_table_pawn[row][col] / 20
                 piece_count += 1
                 white_pawns_per_col[col] += 1
                 white_pawn_rows[col].append(row)
             if board[row][col] == "-B":
                 material += 1
-                material += piece_square_table_pawn[7 - row][col] / 50
+                material += piece_square_table_pawn[7 - row][col] / 20
                 piece_count += 1
                 black_pawns_per_col[col] += 1
                 black_pawn_rows[col].append(row)
             if board[row][col] == "L":
                 material -= 3
-                material -= piece_square_table_bishop[row][col] / 50
+                material -= piece_square_table_bishop[row][col] / 20
                 piece_count += 1
                 white_bishops +=1
             if board[row][col] == "-L":
                 material += 3
-                material += piece_square_table_bishop[7- row][col] / 50
+                material += piece_square_table_bishop[7- row][col] / 20
                 piece_count += 1
                 black_bishops +=1
             if board[row][col] == "S":
                 material -= 3
-                material -= piece_square_table_knight[row][col] / 50
+                material -= piece_square_table_knight[row][col] / 20
                 piece_count += 1
             if board[row][col] == "-S":
                 material += 3
-                material += piece_square_table_knight[7 - row][col] / 50
+                material += piece_square_table_knight[7 - row][col] / 20
                 piece_count += 1
             if board[row][col] == "T":
                 material -= 5
-                material -= piece_square_table_rook[row][col] / 50
+                material -= piece_square_table_rook[row][col] / 20
                 piece_count += 1
                 white_rooks.append((row, col))
             if board[row][col] == "-T":
                 material += 5
-                material += piece_square_table_rook[7 - row][col] / 50
+                material += piece_square_table_rook[7 - row][col] / 20
                 piece_count += 1
                 black_rooks.append((row, col))
             if board[row][col] == "D":
                 material -= 9
-                material -= piece_square_table_queen[row][col] / 50
+                material -= piece_square_table_queen[row][col] / 20
                 piece_count += 1
             if board[row][col] == "-D":
                 material += 9
-                material += piece_square_table_queen[7 - row][col] / 50
+                material += piece_square_table_queen[7 - row][col] / 20
                 piece_count += 1
             if board[row][col] == "K":
-                material -= piece_square_table_king[row][col] / 50
+                material -= piece_square_table_king[row][col] / 20
                 white_king_pos = (row, col)
             if board[row][col] == "-K":
-                material += piece_square_table_king[7 - row][col] / 50
+                material += piece_square_table_king[7 - row][col] / 20
                 black_king_pos = (row, col)
 
     if white_bishops >= 2:
@@ -317,7 +315,7 @@ def bewerte_material(board):
     if black_bishops >= 2:
         material += 0.3
 
-    if piece_count <= 6 and abs(material) >= 3:
+    if piece_count <= 4 and abs(material) >= 3:
         if material < 0:
             edge_dist = min(black_king_pos[0], 7 - black_king_pos[0],
                             black_king_pos[1], 7 - black_king_pos[1])
@@ -395,7 +393,7 @@ def bewerte_material(board):
                     white_king_safety += 1
                 elif wkr - 2 >= 0 and board[wkr - 2][c] == "B":
                     white_king_safety += 0.5
-        material += white_king_safety * 0.15
+        material -= white_king_safety * 0.15
 
         bkr, bkc = black_king_pos
         black_king_safety = 0
@@ -406,10 +404,10 @@ def bewerte_material(board):
                     black_king_safety += 1
                 elif bkr + 2 <= 7 and board[bkr + 2][c] == "-B":
                     black_king_safety += 0.5
-        material -= black_king_safety * 0.15
+        material += black_king_safety * 0.15
 
         if 2 <= wkc <= 5:
-            material += 0.3
+            material -= 0.3
         if 2 <= bkc <= 5:
             material -= 0.3
 
@@ -485,6 +483,7 @@ def choose_move(board, color, depth=5):
                 evaluation = -negamax(board, depth - 1, next_color, -beta, -alpha, moves.current_hash)
 
         unmake_move_search(board)
+        print(f"Zug: {start}->{target} | Eval: {evaluation:.2f} | Farbe: {color}", file=sys.stderr)
         print(f"  Zug: {start}->{target} | Eval: {evaluation:.2f}", file=sys.stderr)
 
         if evaluation > best_score:
@@ -536,7 +535,8 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
         board[r][c] in (("-D", "-T") if color == "black" else ("D", "T"))
         for r in range(8) for c in range(8)
     )
-    if depth >= 5 and not in_check(board, color) and not is_null_move and has_major_piece:
+    piece_count_nm = sum(1 for r in range(8) for c in range(8) if board[r][c] != "0" and board[r][c] not in ("K", "-K"))
+    if depth >= 5 and not in_check(board, color) and not is_null_move and has_major_piece and piece_count_nm > 4:
         make_null_move()
         null_score = -negamax(board, depth - 3, next_color, -beta, -beta + 1, moves.current_hash, is_null_move=True)
         unmake_null_move()
@@ -830,7 +830,7 @@ def SEE(board, start, target):
     if board[target[0]][target[1]] == "0":
         return 0
 
-    gain = piece_score.get(board[target[0]][target[1]], 0)
+    gain = piece_value.get(board[target[0]][target[1]], 0)
     captured_piece = board[target[0]][target[1]]
     attacker_piece = board[start[0]][start[1]]
     attacker_color = "black" if "-" in attacker_piece else "white"
@@ -892,7 +892,7 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
         best_move_overall = result
         elapsed = time.time() - SEARCH_START
         elapsed = time.time() - SEARCH_START
-        print(f"Tiefe {depth} | Nodes: {NODE_COUNT} | Zeit: {elapsed:.2f}s")
+        print(f"Tiefe {depth} | Nodes: {NODE_COUNT} | Zeit: {elapsed:.2f}s", file=sys.stderr)
         NODE_COUNT = 0
 
         if time.time() - SEARCH_START > SEARCH_LIMIT:
