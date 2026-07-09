@@ -1,4 +1,5 @@
 debug = False
+depth_debug = True
 
 from board import create_board
 from moves import *
@@ -147,15 +148,24 @@ def all_moves(board):
                 continue
 
         if piece == "-K" and start == (0, 4) and target == (0, 6):
-            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 5), "black") or rochade_schach(board,(0,6),"black"):
+            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 5), "black") or rochade_schach(board,
+                                                                                                                  (0,
+                                                                                                                   6),
+                                                                                                                  "black"):
                 all_moves_list.remove(zug)
                 continue
         if piece == "-K" and start == (0, 4) and target == (0, 2):
-            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 3), "black") or rochade_schach(board,(0,2),"black"):
+            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 3), "black") or rochade_schach(board,
+                                                                                                                  (0,
+                                                                                                                   2),
+                                                                                                                  "black"):
                 all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "-B" and target_inhalt == "0" and start[1] != target[1]
+
+        if not is_king and not is_ep and not in_check_now:
+            continue
 
         ep_square = None
         ep_piece = None
@@ -229,16 +239,24 @@ def all_moves_white(board):
                 continue
 
         if piece == "K" and start == (7, 4) and target == (7, 6):
-            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 5), "white") or rochade_schach(board,(7,6),"white"):
+            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 5), "white") or rochade_schach(board,
+                                                                                                                  (7,
+                                                                                                                   6),
+                                                                                                                  "white"):
                 all_moves_list.remove(zug)
                 continue
         if piece == "K" and start == (7, 4) and target == (7, 2):
-            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 3), "white") or rochade_schach(board,(7,2),"white"):
+            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 3), "white") or rochade_schach(board,
+                                                                                                                  (7,
+                                                                                                                   2),
+                                                                                                                  "white"):
                 all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "B" and target_inhalt == "0" and start[1] != target[1]
 
+        if not is_king and not is_ep and not in_check_now:
+            continue
 
         ep_square = None
         ep_piece = None
@@ -464,13 +482,11 @@ def bewerte_material(board):
     return material
 
 SEARCH_ABORTED = False
-def choose_move(board, color, depth=5):
-    alpha = -1000000
-    beta = 1000000
 
+def choose_move(board, color, depth=5, alpha=-1000000, beta=1000000):
     moves_list = all_moves(board) if color == "black" else all_moves_white(board)
     if not moves_list:
-        return None
+        return None, 0
 
     capture_moves = []
     quiet_moves = []
@@ -522,7 +538,7 @@ def choose_move(board, color, depth=5):
 
         move_index += 1
 
-    return best_move
+    return best_move, best_score
 
 def move_score(move, depth, board):
     start, target, promo = move
@@ -549,8 +565,10 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
         return 0
     if moves.position_history.get(moves.current_hash, 0) >= 3:
         return 0
+    tt_move = None
     if zobrist_hash in transsquare_table:
-        d, v, bound, gen = transsquare_table[zobrist_hash]
+        d, v, bound, gen, stored_move = transsquare_table[zobrist_hash]
+        tt_move = stored_move
         if d >= depth:
             if bound == "exact":
                 return v
@@ -607,7 +625,13 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
     quiet_moves.sort(key=lambda zug: move_score(zug, depth, board), reverse=True)
     moves_list = capture_moves + quiet_moves
 
+    if tt_move is not None and tt_move in moves_list:
+        moves_list.remove(tt_move)
+        moves_list.insert(0, tt_move)
+
+
     best_score = -9999999
+    best_move_here = None
     move_index = 0
 
     futility_stand_pat = None
@@ -669,6 +693,7 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
         if score_result > best_score:
             best_score = score_result
+            best_move_here = move
 
         if score_result > alpha:
             alpha = score_result
@@ -684,11 +709,11 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
         move_index += 1
 
     if best_score <= alpha_orig:
-        transsquare_table[zobrist_hash] = (depth, best_score, "upper", TT_GENERATION)
+        transsquare_table[zobrist_hash] = (depth, best_score, "upper", TT_GENERATION, best_move_here)
     elif best_score >= beta:
-        transsquare_table[zobrist_hash] = (depth, best_score, "lower", TT_GENERATION)
+        transsquare_table[zobrist_hash] = (depth, best_score, "lower", TT_GENERATION, best_move_here)
     else:
-        transsquare_table[zobrist_hash] = (depth, best_score, "exact", TT_GENERATION)
+        transsquare_table[zobrist_hash] = (depth, best_score, "exact", TT_GENERATION, best_move_here)
 
     return best_score
 
@@ -920,20 +945,32 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
     SEARCH_LIMIT = time_limit
 
     best_move_overall = None
+    prev_score = None
 
     for depth in range(1, max_depth + 1):
         if time.time() - SEARCH_START > SEARCH_LIMIT:
             break
-        result = choose_move(board, color, depth)
-        if debug:
-            print(f"Tiefe {depth} abgeschlossen | Bester Zug: {best_move_overall}", file=sys.stderr)
-        if SEARCH_ABORTED or result is None:
+
+        if prev_score is None:
+            window_alpha = -1000000
+            window_beta = 1000000
+        else:
+            window_alpha = prev_score - 0.5
+            window_beta = prev_score + 0.5
+
+        move, score = choose_move(board, color, depth, window_alpha, window_beta)
+
+        if move is not None and (score <= window_alpha or score >= window_beta):
+            move, score = choose_move(board, color, depth, -1000000, 1000000)
+        if debug or depth_debug:
+            print(f"Tiefe {depth} abgeschlossen | Bester Zug: {move} | Score: {score}", file=sys.stderr)
+        if SEARCH_ABORTED or move is None:
             break
 
-        best_move_overall = result
+        best_move_overall = move
+        prev_score = score
         elapsed = time.time() - SEARCH_START
-        elapsed = time.time() - SEARCH_START
-        if debug:
+        if debug or depth_debug:
             print(f"Tiefe {depth} | Nodes: {NODE_COUNT} | Zeit: {elapsed:.2f}s", file=sys.stderr)
         NODE_COUNT = 0
 
