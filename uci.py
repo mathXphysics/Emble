@@ -1,7 +1,7 @@
 import sys
 from board import create_board
 from moves import make_move
-from engine import choose_move_iterative
+from engine import choose_move_iterative, thinking_time
 import moves
 import zobrist
 def uci_to_square(uci_str):
@@ -60,7 +60,18 @@ def uci_loop():
                     make_move(board, start, end, promotion_piece=promotion)
                     current_color = "black" if current_color == "white" else "white"
         elif command.startswith("go"):
-            move = choose_move_iterative(board, current_color)
+            parts = command.split()
+            time_limit = thinking_time
+            if "movetime" in parts:
+                time_limit = int(parts[parts.index("movetime") + 1]) / 1000.0
+            elif current_color == "white" and "wtime" in parts:
+                wtime = int(parts[parts.index("wtime") + 1])
+                time_limit = min(thinking_time, wtime / 30000.0)
+            elif current_color == "black" and "btime" in parts:
+                btime = int(parts[parts.index("btime") + 1])
+                time_limit = min(thinking_time, btime / 30000.0)
+
+            move = choose_move_iterative(board, current_color, time_limit=time_limit)
             if move is not None:
                 start_square, end_square, promo = move
                 uci_move = square_to_uci(start_square) + square_to_uci(end_square)

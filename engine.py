@@ -1,3 +1,5 @@
+debug = False
+
 from board import create_board
 from moves import *
 import zobrist
@@ -127,8 +129,8 @@ def all_moves(board):
                         all_moves_list.append((square, target, "S"))
                     else:
                         all_moves_list.append((square, target, None))
-
-    print(f"Züge generiert (black): {len(all_moves_list)}", file=sys.stderr)
+    if debug:
+        print(f"Züge generiert (black): {len(all_moves_list)}", file=sys.stderr)
     in_check_now = in_check(board, "black")
     pinned = get_pinned_pieces(board, "black")
 
@@ -209,8 +211,8 @@ def all_moves_white(board):
                         all_moves_list.append((square, target, "S"))
                     else:
                         all_moves_list.append((square, target, None))
-
-    print(f"Züge generiert (white): {len(all_moves_list)}", file=sys.stderr)
+    if debug:
+        print(f"Züge generiert (white): {len(all_moves_list)}", file=sys.stderr)
     in_check_now = in_check(board, "white")
     pinned = get_pinned_pieces(board, "white")
 
@@ -277,57 +279,57 @@ def bewerte_material(board):
         for col in range(8):
             if board[row][col] == "B":
                 material -= 1
-                material -= piece_square_table_pawn[row][col] / 20
+                material -= piece_square_table_pawn[row][col] / 100
                 piece_count += 1
                 white_pawns_per_col[col] += 1
                 white_pawn_rows[col].append(row)
             if board[row][col] == "-B":
                 material += 1
-                material += piece_square_table_pawn[7 - row][col] / 20
+                material += piece_square_table_pawn[7 - row][col] / 100
                 piece_count += 1
                 black_pawns_per_col[col] += 1
                 black_pawn_rows[col].append(row)
             if board[row][col] == "L":
                 material -= 3
-                material -= piece_square_table_bishop[row][col] / 20
+                material -= piece_square_table_bishop[row][col] / 100
                 piece_count += 1
                 white_bishops +=1
             if board[row][col] == "-L":
                 material += 3
-                material += piece_square_table_bishop[7- row][col] / 20
+                material += piece_square_table_bishop[7- row][col] / 100
                 piece_count += 1
                 black_bishops +=1
             if board[row][col] == "S":
                 material -= 3
-                material -= piece_square_table_knight[row][col] / 20
+                material -= piece_square_table_knight[row][col] / 100
                 piece_count += 1
             if board[row][col] == "-S":
                 material += 3
-                material += piece_square_table_knight[7 - row][col] / 20
+                material += piece_square_table_knight[7 - row][col] / 100
                 piece_count += 1
             if board[row][col] == "T":
                 material -= 5
-                material -= piece_square_table_rook[row][col] / 20
+                material -= piece_square_table_rook[row][col] / 100
                 piece_count += 1
                 white_rooks.append((row, col))
             if board[row][col] == "-T":
                 material += 5
-                material += piece_square_table_rook[7 - row][col] / 20
+                material += piece_square_table_rook[7 - row][col] / 100
                 piece_count += 1
                 black_rooks.append((row, col))
             if board[row][col] == "D":
                 material -= 9
-                material -= piece_square_table_queen[row][col] / 20
+                material -= piece_square_table_queen[row][col] / 100
                 piece_count += 1
             if board[row][col] == "-D":
                 material += 9
-                material += piece_square_table_queen[7 - row][col] / 20
+                material += piece_square_table_queen[7 - row][col] / 100
                 piece_count += 1
             if board[row][col] == "K":
-                material -= piece_square_table_king[row][col] / 20
+                material -= piece_square_table_king[row][col] / 100
                 white_king_pos = (row, col)
             if board[row][col] == "-K":
-                material += piece_square_table_king[7 - row][col] / 20
+                material += piece_square_table_king[7 - row][col] / 100
                 black_king_pos = (row, col)
 
     if white_bishops >= 2:
@@ -505,13 +507,13 @@ def choose_move(board, color, depth=5):
 
         unmake_move_search(board)
 
-        if time.time() - SEARCH_START > SEARCH_LIMIT:
-            SEARCH_ABORTED = True
-            break
-
         if evaluation > best_score:
             best_score = evaluation
             best_move = (start, target, promo)
+
+        if time.time() - SEARCH_START > SEARCH_LIMIT:
+            SEARCH_ABORTED = True
+            break
 
         if evaluation > alpha:
             alpha = evaluation
@@ -574,8 +576,8 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
     if time.time() - SEARCH_START > SEARCH_LIMIT:
         return bewerte_material(board) if color == "black" else -bewerte_material(board)
-
-    print(f"{'  ' * depth}Tiefe {depth} | {color} | alpha={alpha} beta={beta}", file=sys.stderr)
+    if debug:
+        print(f"{'  ' * depth}Tiefe {depth} | {color} | alpha={alpha} beta={beta}", file=sys.stderr)
     if depth == 0:
         return quiescence(board, alpha, beta, color)
 
@@ -608,13 +610,16 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
     best_score = -9999999
     move_index = 0
 
+    futility_stand_pat = None
+    if depth == 1 and not in_check_now:
+        futility_stand_pat = bewerte_material(board) if color == "black" else -bewerte_material(board)
+
     for move in moves_list:
         start, target, promo = move
 
         is_capture = board[target[0]][target[1]] != "0" or _is_ep(board, start, target)
         if depth == 1 and not in_check_now and not is_capture:
-            stand_pat = bewerte_material(board) if color == "black" else -bewerte_material(board)
-            if stand_pat + 3 < alpha:
+            if futility_stand_pat + 3 < alpha:
                 move_index += 1
                 continue
 
@@ -879,8 +884,8 @@ def SEE(board, start, target):
 
     board[start[0]][start[1]] = attacker_piece
     board[target[0]][target[1]] = captured_piece
-
-    print(f"  SEE: {start}->{target} | gain={gain} | result={result}", file=sys.stderr)
+    if debug:
+        print(f"  SEE: {start}->{target} | gain={gain} | result={result}", file=sys.stderr)
     return result
 
 def SEE_after(board, square, color):
@@ -920,14 +925,16 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
         if time.time() - SEARCH_START > SEARCH_LIMIT:
             break
         result = choose_move(board, color, depth)
-        print(f"Tiefe {depth} abgeschlossen | Bester Zug: {best_move_overall}", file=sys.stderr)
+        if debug:
+            print(f"Tiefe {depth} abgeschlossen | Bester Zug: {best_move_overall}", file=sys.stderr)
         if SEARCH_ABORTED or result is None:
             break
 
         best_move_overall = result
         elapsed = time.time() - SEARCH_START
         elapsed = time.time() - SEARCH_START
-        print(f"Tiefe {depth} | Nodes: {NODE_COUNT} | Zeit: {elapsed:.2f}s", file=sys.stderr)
+        if debug:
+            print(f"Tiefe {depth} | Nodes: {NODE_COUNT} | Zeit: {elapsed:.2f}s", file=sys.stderr)
         NODE_COUNT = 0
 
         if time.time() - SEARCH_START > SEARCH_LIMIT:
@@ -936,9 +943,24 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
     return best_move_overall
 
 
+def _ep_file_of(last_move):
+    if last_move is None:
+        return None
+    start, target, piece = last_move
+    if piece == "B" and start[0] == 6 and target[0] == 4:
+        return target[1]
+    if piece == "-B" and start[0] == 1 and target[0] == 3:
+        return target[1]
+    return None
+
 def make_move_search(board, start, target, promotion_piece=None):
     piece = board[start[0]][start[1]]
     captured = board[target[0]][target[1]]
+
+    old_white_short = moves.white_short
+    old_white_long = moves.white_long
+    old_black_short = moves.black_short
+    old_black_long = moves.black_long
 
     is_castling = False
     rook_start = None
@@ -981,8 +1003,8 @@ def make_move_search(board, start, target, promotion_piece=None):
 
     state = (
         start, target, piece, captured,
-        moves.white_short, moves.white_long,
-        moves.black_short, moves.black_long,
+        old_white_short, old_white_long,
+        old_black_short, old_black_long,
         moves.last_move, moves.halfmove_clock,
         moves.current_hash, prev_hash, prev_count,
         is_castling, rook_start, rook_target,
@@ -1022,6 +1044,7 @@ def make_move_search(board, start, target, promotion_piece=None):
     else:
         h = zobrist.update_hash(h, target[0], target[1], piece)
 
+    # --- NEU: Rochaderechte im Hash toggeln ---
     if piece == "K":
         moves.white_short = False
         moves.white_long = False
@@ -1037,16 +1060,35 @@ def make_move_search(board, start, target, promotion_piece=None):
     if target == (0, 0): moves.black_long = False
     if target == (0, 7): moves.black_short = False
 
+    if old_white_short and not moves.white_short:
+        h ^= zobrist.ZOBRIST_CASTLING["white_short"]
+    if old_white_long and not moves.white_long:
+        h ^= zobrist.ZOBRIST_CASTLING["white_long"]
+    if old_black_short and not moves.black_short:
+        h ^= zobrist.ZOBRIST_CASTLING["black_short"]
+    if old_black_long and not moves.black_long:
+        h ^= zobrist.ZOBRIST_CASTLING["black_long"]
+
     if piece in ("B", "-B") or captured != "0":
         moves.halfmove_clock = 0
     else:
         moves.halfmove_clock += 1
 
+    # --- NEU: En-Passant-Datei im Hash toggeln ---
+    old_ep = _ep_file_of(moves.last_move)
+    if old_ep is not None:
+        h ^= zobrist.ZOBRIST_EP_FILE[old_ep]
+
+    new_last_move = (start, target, piece)
+    new_ep = _ep_file_of(new_last_move)
+    if new_ep is not None:
+        h ^= zobrist.ZOBRIST_EP_FILE[new_ep]
+
     h = zobrist.flip_turn(h)
 
     moves.current_hash = h
     moves.position_history[h] = moves.position_history.get(h, 0) + 1
-    moves.last_move = (start, target, piece)
+    moves.last_move = new_last_move
 
 
 def unmake_move_search(board):
@@ -1212,5 +1254,5 @@ def _is_ep(board, start, target):
 def _victim_score(board, start, target):
     victim = board[target[0]][target[1]]
     if victim == "0" and _is_ep(board, start, target):
-        return 1  # geschlagener Bauer bei En Passant
+        return 1  
     return piece_score.get(victim, 0)

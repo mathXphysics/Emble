@@ -77,7 +77,15 @@ while True:
                 elif selected != None:
                     end_square = (square_row, square_col)
                     selected = None
-                    erfolg = make_move(board,start_square, end_square)
+                    promotion_needed = (
+                            (turn == "white" and start_square[0] == 1 and end_square[0] == 0
+                             and board[start_square[0]][start_square[1]] == "B")
+                            or
+                            (turn == "black" and start_square[0] == 6 and end_square[0] == 7
+                             and board[start_square[0]][start_square[1]] == "-B")
+                    )
+                    chosen_promo = moves.promotion_auswahl() if promotion_needed else None
+                    erfolg = make_move(board, start_square, end_square, promotion_piece=chosen_promo)
                     if erfolg == True:
                         erfolg = False
                         if turn == "white":

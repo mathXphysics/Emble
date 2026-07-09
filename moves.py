@@ -401,11 +401,18 @@ def make_move(board,start_square,end_square, promotion_piece = None):
                     if inputPromotion == "bishop":
                         board[0][end_square[1]] = "L"
                 if board[7][end_square[1]] == "-B":
-                    board[7][end_square[1]] = "-D"
-                if piece == "B" and target_inhalt == "0" and start_square[1] != end_square[1]:
-                    board[start_square[0]][end_square[1]] = "0"
-                if piece == "-B" and target_inhalt == "0" and start_square[1] != end_square[1]:
-                    board[start_square[0]][end_square[1]] = "0"
+                    if promotion_piece is None:
+                        inputPromotion = "Queen"
+                    else:
+                        inputPromotion = promotion_piece
+                    if inputPromotion == "Queen":
+                        board[7][end_square[1]] = "-D"
+                    if inputPromotion == "rook":
+                        board[7][end_square[1]] = "-T"
+                    if inputPromotion == "knight":
+                        board[7][end_square[1]] = "-S"
+                    if inputPromotion == "bishop":
+                        board[7][end_square[1]] = "-L"
 
                 if "K" in piece:
                     if color == "white":
