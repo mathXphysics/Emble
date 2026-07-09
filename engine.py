@@ -141,6 +141,16 @@ def all_moves(board):
         is_king = piece == "-K"
         if not is_king and start in pinned:
             if target not in pinned[start]:
+                all_moves_list.remove(zug)
+                continue
+
+        if piece == "-K" and start == (0, 4) and target == (0, 6):
+            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 5), "black") or rochade_schach(board,(0,6),"black"):
+                all_moves_list.remove(zug)
+                continue
+        if piece == "-K" and start == (0, 4) and target == (0, 2):
+            if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 3), "black") or rochade_schach(board,(0,2),"black"):
+                all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "-B" and target_inhalt == "0" and start[1] != target[1]
@@ -213,6 +223,16 @@ def all_moves_white(board):
         is_king = piece == "K"
         if not is_king and start in pinned:
             if target not in pinned[start]:
+                all_moves_list.remove(zug)
+                continue
+
+        if piece == "K" and start == (7, 4) and target == (7, 6):
+            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 5), "white") or rochade_schach(board,(7,6),"white"):
+                all_moves_list.remove(zug)
+                continue
+        if piece == "K" and start == (7, 4) and target == (7, 2):
+            if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 3), "white") or rochade_schach(board,(7,2),"white"):
+                all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "B" and target_inhalt == "0" and start[1] != target[1]
@@ -407,7 +427,7 @@ def bewerte_material(board):
         material += black_king_safety * 0.15
 
         if 2 <= wkc <= 5:
-            material -= 0.3
+            material += 0.3
         if 2 <= bkc <= 5:
             material -= 0.3
 
@@ -441,6 +461,7 @@ def bewerte_material(board):
 
     return material
 
+SEARCH_ABORTED = False
 def choose_move(board, color, depth=5):
     alpha = -1000000
     beta = 1000000
@@ -453,13 +474,13 @@ def choose_move(board, color, depth=5):
     quiet_moves = []
     for zug in moves_list:
         start, target, promo = zug
-        if board[target[0]][target[1]] != "0":
+        if board[target[0]][target[1]] != "0" or _is_ep(board, start, target):
             capture_moves.append(zug)
         else:
             quiet_moves.append(zug)
 
     capture_moves.sort(
-        key=lambda z: piece_score.get(board[z[1][0]][z[1][1]], 0)
+        key=lambda z: _victim_score(board, z[0], z[1])
                       - piece_score.get(board[z[0][0]][z[0][1]], 0),
         reverse=True
     )
@@ -483,8 +504,10 @@ def choose_move(board, color, depth=5):
                 evaluation = -negamax(board, depth - 1, next_color, -beta, -alpha, moves.current_hash)
 
         unmake_move_search(board)
-        print(f"Zug: {start}->{target} | Eval: {evaluation:.2f} | Farbe: {color}", file=sys.stderr)
-        print(f"  Zug: {start}->{target} | Eval: {evaluation:.2f}", file=sys.stderr)
+
+        if time.time() - SEARCH_START > SEARCH_LIMIT:
+            SEARCH_ABORTED = True
+            break
 
         if evaluation > best_score:
             best_score = evaluation
@@ -501,7 +524,7 @@ def choose_move(board, color, depth=5):
 
 def move_score(move, depth, board):
     start, target, promo = move
-    if board[target[0]][target[1]] != "0":
+    if board[target[0]][target[1]] != "0" or _is_ep(board, start, target):
         see_value = SEE(board,start, target)
         if see_value > 0:
             return 900000 + see_value
@@ -519,9 +542,14 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
     alpha_orig = alpha
     global NODE_COUNT
     NODE_COUNT += 1
+
+    if moves.halfmove_clock >= 100:
+        return 0
+    if moves.position_history.get(moves.current_hash, 0) >= 3:
+        return 0
     if zobrist_hash in transsquare_table:
         d, v, bound, gen = transsquare_table[zobrist_hash]
-        if gen == TT_GENERATION and d >= depth:
+        if d >= depth:
             if bound == "exact":
                 return v
             if bound == "lower":
@@ -535,18 +563,14 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
         board[r][c] in (("-D", "-T") if color == "black" else ("D", "T"))
         for r in range(8) for c in range(8)
     )
-    piece_count_nm = sum(1 for r in range(8) for c in range(8) if board[r][c] != "0" and board[r][c] not in ("K", "-K"))
+    piece_count_nm = sum(
+        1 for r in range(8) for c in range(8) if board[r][c] != "0" and board[r][c] not in ("K", "-K"))
     if depth >= 5 and not in_check(board, color) and not is_null_move and has_major_piece and piece_count_nm > 4:
         make_null_move()
         null_score = -negamax(board, depth - 3, next_color, -beta, -beta + 1, moves.current_hash, is_null_move=True)
         unmake_null_move()
         if null_score >= beta:
             return beta
-
-    if moves.halfmove_clock >= 100:
-        return 0
-    if moves.position_history.get(moves.current_hash, 0) >= 3:
-        return 0
 
     if time.time() - SEARCH_START > SEARCH_LIMIT:
         return bewerte_material(board) if color == "black" else -bewerte_material(board)
@@ -564,16 +588,17 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
             return -1000 - depth
         return 0
 
+
     capture_moves = []
     quiet_moves = []
     for start, target, promo in moves_list:
-        if board[target[0]][target[1]] != "0":
+        if board[target[0]][target[1]] != "0" or _is_ep(board, start, target):
             capture_moves.append((start, target, promo))
         else:
             quiet_moves.append((start, target, promo))
 
     capture_moves.sort(
-        key=lambda z: piece_score.get(board[z[1][0]][z[1][1]], 0)
+        key=lambda z: _victim_score(board, z[0], z[1])
                       - piece_score.get(board[z[0][0]][z[0][1]], 0),
         reverse=True
     )
@@ -586,7 +611,7 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
     for move in moves_list:
         start, target, promo = move
 
-        is_capture = board[target[0]][target[1]] != "0"
+        is_capture = board[target[0]][target[1]] != "0" or _is_ep(board, start, target)
         if depth == 1 and not in_check_now and not is_capture:
             stand_pat = bewerte_material(board) if color == "black" else -bewerte_material(board)
             if stand_pat + 3 < alpha:
@@ -595,7 +620,7 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
         make_move_search(board, start, target, promo)
 
-        move_gives_check = False
+        move_gives_check = gives_check(board, start, target, promo, color)
         new_depth = depth - 1
 
 
@@ -666,27 +691,37 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 def quiescence(board, alpha, beta, color, depth=10):
     if time.time() - SEARCH_START > SEARCH_LIMIT:
         return bewerte_material(board) if color == "black" else -bewerte_material(board)
-    stand_pat = bewerte_material(board) if color == "black" else -bewerte_material(board)
-    if depth <= 0:
-        return stand_pat
-    if stand_pat >= beta:
-        return beta
-    if alpha < stand_pat:
-        alpha = stand_pat
 
+    in_check_now = in_check(board, color)
     moves_list = all_moves(board) if color == "black" else all_moves_white(board)
 
-    capture_moves = []
-    for zug in moves_list:
-        start, target, promo = zug
-        if board[target[0]][target[1]] != "0":
-            see_val = SEE(board, start, target)
-            if see_val >= 0:
-                capture_moves.append((see_val, zug))
-    capture_moves.sort(key=lambda x: x[0], reverse=True)
-    capture_moves = [x[1] for x in capture_moves]
+    if in_check_now:
+        if not moves_list:
+            return -1000 - depth
+        search_moves = moves_list
+        stand_pat = None
+    else:
+        stand_pat = bewerte_material(board) if color == "black" else -bewerte_material(board)
+        if depth <= 0:
+            return stand_pat
+        if stand_pat >= beta:
+            return beta
+        if alpha < stand_pat:
+            alpha = stand_pat
 
-    for start, target, promo in capture_moves:
+        capture_moves = []
+        for zug in moves_list:
+            start, target, promo = zug
+            piece = board[start[0]][start[1]]
+            is_ep = piece in ("B", "-B") and board[target[0]][target[1]] == "0" and start[1] != target[1]
+            if board[target[0]][target[1]] != "0" or is_ep:
+                see_val = SEE(board, start, target)
+                if see_val >= 0:
+                    capture_moves.append((see_val, zug))
+        capture_moves.sort(key=lambda x: x[0], reverse=True)
+        search_moves = [x[1] for x in capture_moves]
+
+    for start, target, promo in search_moves:
         make_move_search(board, start, target, promo)
 
         next_color = "white" if color == "black" else "black"
@@ -699,7 +734,7 @@ def quiescence(board, alpha, beta, color, depth=10):
         if score_result > alpha:
             alpha = score_result
 
-    return alpha
+    return alpha if stand_pat is None else alpha
 
 
 def score(board, start, target):
@@ -857,8 +892,8 @@ def SEE_after(board, square, color):
     if best is None:
         return 0
     piece = board[best[0]][best[1]]
-    val = piece_value.get(piece, 0)
     captured = board[square[0]][square[1]]
+    val = piece_value.get(captured, 0)
     board[square[0]][square[1]] = piece
     board[best[0]][best[1]] = "0"
     next_color = "white" if color == "black" else "black"
@@ -884,10 +919,9 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
     for depth in range(1, max_depth + 1):
         if time.time() - SEARCH_START > SEARCH_LIMIT:
             break
-
         result = choose_move(board, color, depth)
         print(f"Tiefe {depth} abgeschlossen | Bester Zug: {best_move_overall}", file=sys.stderr)
-        if result is None:
+        if SEARCH_ABORTED or result is None:
             break
 
         best_move_overall = result
@@ -1126,19 +1160,14 @@ def get_pinned_pieces(board, color):
 
             if valid:
                 allowed = []
-
-                rr = found_own_piece[0] + dr
-                cc = found_own_piece[1] + dc
-
+                rr, cc = king_pos[0] + dr, king_pos[1] + dc
                 while True:
-                    allowed.append((rr, cc))
-
+                    if (rr, cc) != found_own_piece:
+                        allowed.append((rr, cc))
                     if (rr, cc) == (r, c):
                         break
-
                     rr += dr
                     cc += dc
-
                 pinned[found_own_piece] = allowed
 
             break
@@ -1175,64 +1204,13 @@ def unmake_null_move():
     moves.last_move = last
 
 
-def attackers(board, square, color):
-    attackers = []
 
-    enemy = "-" if color == "black" else ""
+def _is_ep(board, start, target):
+    piece = board[start[0]][start[1]]
+    return piece in ("B", "-B") and board[target[0]][target[1]] == "0" and start[1] != target[1]
 
-    r0, c0 = square
-
-    if color == "white":
-        for dc in (-1, 1):
-            r = r0 + 1
-            c = c0 + dc
-            if 0 <= r < 8 and 0 <= c < 8 and board[r][c] == "B":
-                attackers.append((r, c))
-    else:
-        for dc in (-1, 1):
-            r = r0 - 1
-            c = c0 + dc
-            if 0 <= r < 8 and 0 <= c < 8 and board[r][c] == "-B":
-                attackers.append((r, c))
-
-    for dr, dc in direction_Knight:
-        r = r0 + dr
-        c = c0 + dc
-        if 0 <= r < 8 and 0 <= c < 8:
-            p = board[r][c]
-            if p == enemy + "S":
-                attackers.append((r, c))
-
-    for dr, dc in direction_King:
-        r = r0 + dr
-        c = c0 + dc
-        if 0 <= r < 8 and 0 <= c < 8:
-            p = board[r][c]
-            if p == enemy + "K":
-                attackers.append((r, c))
-
-    for dr, dc in direction_straight:
-        r = r0 + dr
-        c = c0 + dc
-        while 0 <= r < 8 and 0 <= c < 8:
-            p = board[r][c]
-            if p != "0":
-                if p == enemy + "T" or p == enemy + "D":
-                    attackers.append((r, c))
-                break
-            r += dr
-            c += dc
-
-    for dr, dc in direction_diagonal:
-        r = r0 + dr
-        c = c0 + dc
-        while 0 <= r < 8 and 0 <= c < 8:
-            p = board[r][c]
-            if p != "0":
-                if p == enemy + "L" or p == enemy + "D":
-                    attackers.append((r, c))
-                break
-            r += dr
-            c += dc
-
-    return attackers
+def _victim_score(board, start, target):
+    victim = board[target[0]][target[1]]
+    if victim == "0" and _is_ep(board, start, target):
+        return 1  # geschlagener Bauer bei En Passant
+    return piece_score.get(victim, 0)

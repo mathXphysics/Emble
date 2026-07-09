@@ -631,6 +631,18 @@ def rochade_schach(board, square, color):
             if board[new_row][new_collum] == "S":
                 king_attacked = True
 
+    for direction in direction_King:
+        new_row = square[0] + direction[0]
+        new_collum = square[1] + direction[1]
+        if new_row < 0 or new_row > 7 or new_collum < 0 or new_collum > 7:
+            continue
+        if color == "white":
+            if board[new_row][new_collum] == "-K":
+                king_attacked = True
+        if color == "black":
+            if board[new_row][new_collum] == "K":
+                king_attacked = True
+
     return king_attacked
 
 
