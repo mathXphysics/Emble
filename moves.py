@@ -13,6 +13,8 @@ last_move = None
 current_hash = None
 position_history = {}
 halfmove_clock = 0
+white_king_pos = None
+black_king_pos = None
 
 direction_straight = [
     (+1, +0),
@@ -156,6 +158,8 @@ def find_King(board):
             for collum in range(8):
                 if board[index][collum] == "K" or board[index][collum] == "-K":
                     king.append((index, collum))
+                    if len(king) == 2:
+                        return king
     return king
 
 def king_moves(board, square):
@@ -439,19 +443,22 @@ def make_move(board,start_square,end_square, promotion_piece = None):
                 last_move = (start_square, end_square, piece)
     return erfolg
 
-def in_check(board,color):
+def in_check(board, color, king_pos=None):
     king_attacked = False
-    king = find_King(board)
-    if len(king) < 2:
-        return False
-    Position = None
-    for k in king:
-        if color == "white" and "-" not in board[k[0]][k[1]]:
-            Position = k
-        if color == "black" and "-" in board[k[0]][k[1]]:
-            Position = k
-    if Position is None:
-        return False
+    if king_pos is not None:
+        Position = king_pos
+    else:
+        king = find_King(board)
+        if len(king) < 2:
+            return False
+        Position = None
+        for k in king:
+            if color == "white" and "-" not in board[k[0]][k[1]]:
+                Position = k
+                if color == "black" and "-" in board[k[0]][k[1]]:
+                    Position = k
+        if Position is None:
+            return False
     square = Position
     for direction in direction_straight:
         now_row = square[0]

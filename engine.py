@@ -132,11 +132,13 @@ def all_moves(board):
                         all_moves_list.append((square, target, None))
     if debug:
         print(f"Züge generiert (black): {len(all_moves_list)}", file=sys.stderr)
+    king_pos = moves.black_king_pos
     in_check_now = in_check(board, "black")
     pinned = get_pinned_pieces(board, "black")
 
     prev_last_move = moves.last_move
-    for zug in all_moves_list[:]:
+    legal_moves = []
+    for zug in all_moves_list:
         start, target, promo = zug
         piece = board[start[0]][start[1]]
         target_inhalt = board[target[0]][target[1]]
@@ -144,7 +146,6 @@ def all_moves(board):
         is_king = piece == "-K"
         if not is_king and start in pinned:
             if target not in pinned[start]:
-                all_moves_list.remove(zug)
                 continue
 
         if piece == "-K" and start == (0, 4) and target == (0, 6):
@@ -152,19 +153,18 @@ def all_moves(board):
                                                                                                                   (0,
                                                                                                                    6),
                                                                                                                   "black"):
-                all_moves_list.remove(zug)
                 continue
         if piece == "-K" and start == (0, 4) and target == (0, 2):
             if rochade_schach(board, (0, 4), "black") or rochade_schach(board, (0, 3), "black") or rochade_schach(board,
                                                                                                                   (0,
                                                                                                                    2),
                                                                                                                   "black"):
-                all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "-B" and target_inhalt == "0" and start[1] != target[1]
 
         if not is_king and not is_ep and not in_check_now:
+            legal_moves.append(zug)
             continue
 
         ep_square = None
@@ -176,9 +176,8 @@ def all_moves(board):
 
         board[target[0]][target[1]] = piece
         board[start[0]][start[1]] = "0"
-        possible = in_check(board, "black")
-        if possible:
-            all_moves_list.remove(zug)
+        sim_king_pos = target if is_king else king_pos
+        possible = in_check(board, "black", sim_king_pos)
         board[start[0]][start[1]] = piece
         board[target[0]][target[1]] = target_inhalt
         if ep_square is not None:
@@ -186,7 +185,11 @@ def all_moves(board):
 
         moves.last_move = prev_last_move
 
-    return all_moves_list
+        if not possible:
+            legal_moves.append(zug)
+
+    return legal_moves
+
 
 def all_moves_white(board):
     all_moves_list = []
@@ -223,11 +226,13 @@ def all_moves_white(board):
                         all_moves_list.append((square, target, None))
     if debug:
         print(f"Züge generiert (white): {len(all_moves_list)}", file=sys.stderr)
+    king_pos = moves.white_king_pos
     in_check_now = in_check(board, "white")
     pinned = get_pinned_pieces(board, "white")
 
     prev_last_move = moves.last_move
-    for zug in all_moves_list[:]:
+    legal_moves = []
+    for zug in all_moves_list:
         start, target, promo = zug
         piece = board[start[0]][start[1]]
         target_inhalt = board[target[0]][target[1]]
@@ -235,7 +240,6 @@ def all_moves_white(board):
         is_king = piece == "K"
         if not is_king and start in pinned:
             if target not in pinned[start]:
-                all_moves_list.remove(zug)
                 continue
 
         if piece == "K" and start == (7, 4) and target == (7, 6):
@@ -243,19 +247,18 @@ def all_moves_white(board):
                                                                                                                   (7,
                                                                                                                    6),
                                                                                                                   "white"):
-                all_moves_list.remove(zug)
                 continue
         if piece == "K" and start == (7, 4) and target == (7, 2):
             if rochade_schach(board, (7, 4), "white") or rochade_schach(board, (7, 3), "white") or rochade_schach(board,
                                                                                                                   (7,
                                                                                                                    2),
                                                                                                                   "white"):
-                all_moves_list.remove(zug)
                 continue
 
         is_ep = piece == "B" and target_inhalt == "0" and start[1] != target[1]
 
         if not is_king and not is_ep and not in_check_now:
+            legal_moves.append(zug)
             continue
 
         ep_square = None
@@ -267,18 +270,20 @@ def all_moves_white(board):
 
         board[target[0]][target[1]] = piece
         board[start[0]][start[1]] = "0"
-        possible = in_check(board, "white")
-        if possible:
-            all_moves_list.remove(zug)
+        sim_king_pos = target if is_king else king_pos
+        possible = in_check(board, "white", sim_king_pos)
         board[start[0]][start[1]] = piece
         board[target[0]][target[1]] = target_inhalt
-
         if ep_square is not None:
             board[ep_square[0]][ep_square[1]] = ep_piece
 
         moves.last_move = prev_last_move
 
-    return all_moves_list
+        if not possible:
+            legal_moves.append(zug)
+
+    return legal_moves
+
 
 def bewerte_material(board):
     material = 0
@@ -585,7 +590,8 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
     )
     piece_count_nm = sum(
         1 for r in range(8) for c in range(8) if board[r][c] != "0" and board[r][c] not in ("K", "-K"))
-    if depth >= 5 and not in_check(board, color) and not is_null_move and has_major_piece and piece_count_nm > 4:
+    king_pos = moves.white_king_pos if color == "white" else moves.black_king_pos
+    if depth >= 5 and not in_check(board, color,king_pos) and not is_null_move and has_major_piece and piece_count_nm > 4:
         make_null_move()
         null_score = -negamax(board, depth - 3, next_color, -beta, -beta + 1, moves.current_hash, is_null_move=True)
         unmake_null_move()
@@ -601,7 +607,7 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
     moves_list = all_moves(board) if color == "black" else all_moves_white(board)
 
-    in_check_now = in_check(board, color)
+    in_check_now = in_check(board, color, king_pos)
 
     if not moves_list:
         if in_check_now:
@@ -649,9 +655,7 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
         make_move_search(board, start, target, promo)
 
-        move_gives_check = gives_check(board, start, target, promo, color)
         new_depth = depth - 1
-
 
         if move_index == 0:
             score_result = -negamax(
@@ -668,11 +672,13 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
                     move_index >= 4
                     and new_depth >= 3
                     and not is_capture
-                    and not move_gives_check
                     and not in_check_now
                     and move != KILLER[depth][0]
                     and move != KILLER[depth][1]
             )
+
+            if can_reduce and gives_check(board, start, target, promo, color):
+                can_reduce = False
 
             if can_reduce:
                 reduction = 1 + move_index // 6
@@ -719,10 +725,13 @@ def negamax(board, depth, color, alpha, beta, zobrist_hash, is_null_move=False):
 
 
 def quiescence(board, alpha, beta, color, depth=10):
+    global NODE_COUNT
+    NODE_COUNT += 1
     if time.time() - SEARCH_START > SEARCH_LIMIT:
         return bewerte_material(board) if color == "black" else -bewerte_material(board)
 
-    in_check_now = in_check(board, color)
+    king_pos = moves.white_king_pos if color == "white" else moves.black_king_pos
+    in_check_now = in_check(board, color, king_pos)
     moves_list = all_moves(board) if color == "black" else all_moves_white(board)
 
     if in_check_now:
@@ -751,7 +760,14 @@ def quiescence(board, alpha, beta, color, depth=10):
         capture_moves.sort(key=lambda x: x[0], reverse=True)
         search_moves = [x[1] for x in capture_moves]
 
+    DELTA_MARGIN = 1.0
+
     for start, target, promo in search_moves:
+        if stand_pat is not None:
+            victim_value = _victim_score(board, start, target)
+            if stand_pat + victim_value + DELTA_MARGIN < alpha:
+                continue
+
         make_move_search(board, start, target, promo)
 
         next_color = "white" if color == "black" else "black"
@@ -932,6 +948,18 @@ def SEE_after(board, square, color):
     board[square[0]][square[1]] = captured
     return result
 
+def sync_king_positions(board):
+    white_pos = None
+    black_pos = None
+    for r in range(8):
+        for c in range(8):
+            if board[r][c] == "K":
+                white_pos = (r, c)
+            elif board[r][c] == "-K":
+                black_pos = (r, c)
+    moves.white_king_pos = white_pos
+    moves.black_king_pos = black_pos
+
 def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
     global SEARCH_START, SEARCH_LIMIT
     global TT_GENERATION
@@ -998,6 +1026,8 @@ def make_move_search(board, start, target, promotion_piece=None):
     old_white_long = moves.white_long
     old_black_short = moves.black_short
     old_black_long = moves.black_long
+    old_white_king_pos = moves.white_king_pos
+    old_black_king_pos = moves.black_king_pos
 
     is_castling = False
     rook_start = None
@@ -1045,7 +1075,8 @@ def make_move_search(board, start, target, promotion_piece=None):
         moves.last_move, moves.halfmove_clock,
         moves.current_hash, prev_hash, prev_count,
         is_castling, rook_start, rook_target,
-        is_en_passant, ep_square, ep_piece
+        is_en_passant, ep_square, ep_piece,
+        old_white_king_pos, old_black_king_pos
     )
     move_stack.append(state)
 
@@ -1081,13 +1112,17 @@ def make_move_search(board, start, target, promotion_piece=None):
     else:
         h = zobrist.update_hash(h, target[0], target[1], piece)
 
-    # --- NEU: Rochaderechte im Hash toggeln ---
-    if piece == "K":
-        moves.white_short = False
-        moves.white_long = False
-    if piece == "-K":
-        moves.black_short = False
-        moves.black_long = False
+        if piece == "K":
+            moves.white_king_pos = target
+        if piece == "-K":
+            moves.black_king_pos = target
+
+        if piece == "K":
+            moves.white_short = False
+            moves.white_long = False
+        if piece == "-K":
+            moves.black_short = False
+            moves.black_long = False
     if start == (7, 0): moves.white_long = False
     if start == (7, 7): moves.white_short = False
     if start == (0, 0): moves.black_long = False
@@ -1127,14 +1162,14 @@ def make_move_search(board, start, target, promotion_piece=None):
     moves.position_history[h] = moves.position_history.get(h, 0) + 1
     moves.last_move = new_last_move
 
-
 def unmake_move_search(board):
     (
         start, target, piece, captured,
         ws, wl, bs, bl,
         last, half, h, prev_hash, prev_count,
         is_castling, rook_start, rook_target,
-        is_en_passant, ep_square, ep_piece
+        is_en_passant, ep_square, ep_piece,
+        old_white_king_pos, old_black_king_pos
     ) = move_stack.pop()
 
     board[start[0]][start[1]] = piece
@@ -1154,6 +1189,8 @@ def unmake_move_search(board):
     moves.black_long = bl
     moves.last_move = last
     moves.halfmove_clock = half
+    moves.white_king_pos = old_white_king_pos
+    moves.black_king_pos = old_black_king_pos
 
     post_move_hash = moves.current_hash
     current_count = moves.position_history.get(post_move_hash, 0)
@@ -1168,9 +1205,11 @@ def unmake_move_search(board):
 def gives_check(board, start, target, promo, color):
     piece = board[start[0]][start[1]]
     captured = board[target[0]][target[1]]
+    opponent_color = "white" if color == "black" else "black"
+    opponent_king_pos = moves.white_king_pos if opponent_color == "white" else moves.black_king_pos
     board[target[0]][target[1]] = piece
     board[start[0]][start[1]] = "0"
-    result = in_check(board, "white" if color == "black" else "black")
+    result = in_check(board, opponent_color, opponent_king_pos)
     board[start[0]][start[1]] = piece
     board[target[0]][target[1]] = captured
     return result
@@ -1179,17 +1218,16 @@ def history_score(move):
     start, target, promo = move
     return HISTORY[start[0]*8 + start[1]][target[0]*8 + target[1]]
 
-
-def get_pinned_pieces(board, color):
+def get_pinned_pieces(board, color, king_pos=None):
     pinned = {}
 
-    king_pos = None
-    for r in range(8):
-        for c in range(8):
-            if color == "white" and board[r][c] == "K":
-                king_pos = (r, c)
-            if color == "black" and board[r][c] == "-K":
-                king_pos = (r, c)
+    if king_pos is None:
+        for r in range(8):
+            for c in range(8):
+                if color == "white" and board[r][c] == "K":
+                    king_pos = (r, c)
+                    if color == "black" and board[r][c] == "-K":
+                        king_pos = (r, c)
 
     if king_pos is None:
         return pinned
