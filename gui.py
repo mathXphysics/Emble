@@ -1,13 +1,18 @@
 import pygame
 from board import create_board, symbols
-from moves import make_move, in_check
+from moves import make_move
 import moves
-from engine import choose_move, all_moves, all_moves_white, choose_move_iterative, thinking_time
+from engine import choose_move, all_moves, all_moves_white, choose_move_iterative, thinking_time, in_check
 import zobrist
 import os
 board = create_board()
+moves.white_king_pos = (7, 4)
+moves.black_king_pos = (0, 4)
 moves.current_hash = zobrist.compute_hash(board, "white")
 moves.position_history = {moves.current_hash: 1}
+moves.piece_count = 30
+moves.white_major_count = 3
+moves.black_major_count = 3
 pygame.init()
 window = pygame.display.set_mode((700,700), pygame.RESIZABLE)
 turn = "white"

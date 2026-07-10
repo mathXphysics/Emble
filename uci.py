@@ -26,6 +26,8 @@ def uci_loop():
     global current_color, board
     current_color = "white"
     board = create_board()
+    moves.white_king_pos = (7, 4)
+    moves.black_king_pos = (0, 4)
     while True:
         command = input().strip()
         if command == "uci":
@@ -44,6 +46,11 @@ def uci_loop():
             moves.white_long = True
             moves.black_short = True
             moves.black_long = True
+            moves.white_king_pos = (7, 4)
+            moves.black_king_pos = (0, 4)
+            moves.piece_count = 30
+            moves.white_major_count = 3
+            moves.black_major_count = 3
             moves.last_move = None
             moves.current_hash = zobrist.compute_hash(board, "white")
             moves.position_history = {moves.current_hash: 1}

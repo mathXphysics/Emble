@@ -15,6 +15,9 @@ position_history = {}
 halfmove_clock = 0
 white_king_pos = None
 black_king_pos = None
+piece_count = None
+white_major_count = None
+black_major_count = None
 
 direction_straight = [
     (+1, +0),
@@ -444,119 +447,71 @@ def make_move(board,start_square,end_square, promotion_piece = None):
     return erfolg
 
 def in_check(board, color, king_pos=None):
-    king_attacked = False
-    if king_pos is not None:
-        Position = king_pos
-    else:
-        king = find_King(board)
-        if len(king) < 2:
-            return False
-        Position = None
-        for k in king:
-            if color == "white" and "-" not in board[k[0]][k[1]]:
-                Position = k
-                if color == "black" and "-" in board[k[0]][k[1]]:
-                    Position = k
-        if Position is None:
-            return False
-    square = Position
-    for direction in direction_straight:
-        now_row = square[0]
-        now_collum = square[1]
-        piece_found = False
-        while not piece_found:
-            new_row = now_row + direction[0]
-            new_collum = now_collum + direction[1]
-            if new_row < 0 or new_row > 7 or new_collum < 0 or new_collum > 7:
-                piece_found = True
-                continue
-            if color == "white":
-                if board[new_row][new_collum] == "-T" or board[new_row][new_collum] == "-D":
-                    piece_found = True
-                    king_attacked = True
-                if not board[new_row][new_collum] == "0":
-                    piece_found = True
-                    continue
-                now_row = new_row
-                now_collum = new_collum
-            else:
-                if board[new_row][new_collum] == "T" or board[new_row][new_collum] == "D":
-                    piece_found = True
-                    king_attacked = True
-                if not board[new_row][new_collum] == "0":
-                    piece_found = True
-                    continue
-                now_row = new_row
-                now_collum = new_collum
-
-    for direction in direction_diagonal:
-        now_row = square[0]
-        now_collum = square[1]
-        piece_found = False
-        while not piece_found:
-            new_row = now_row + direction[0]
-            new_collum = now_collum + direction[1]
-            if new_row < 0 or new_row > 7 or new_collum < 0 or new_collum > 7:
-                piece_found = True
-                continue
-            if color == "white":
-                if board[new_row][new_collum] == "-L" or board[new_row][new_collum] == "-D":
-                    piece_found = True
-                    king_attacked = True
-                if not board[new_row][new_collum] == "0":
-                    piece_found = True
-                    continue
-                now_row = new_row
-                now_collum = new_collum
-            else:
-                if board[new_row][new_collum] == "L" or board[new_row][new_collum] == "D":
-                    piece_found = True
-                    king_attacked = True
-                if not board[new_row][new_collum] == "0":
-                    piece_found = True
-                    continue
-                now_row = new_row
-                now_collum = new_collum
+    if king_pos is None:
+        king_pos = white_king_pos if color == "white" else black_king_pos
 
     if color == "white":
-        if Position[0] - 1 >= 0 and Position[1] + 1 <= 7:
-            if board[Position[0] - 1][Position[1] + 1] == "-B":
-                king_attacked = True
-        if Position[0] - 1 >= 0 and Position[1] - 1 >= 0:
-            if board[Position[0] - 1][Position[1] - 1] == "-B":
-                king_attacked = True
-    if color == "black":
-        if Position[0] + 1 <= 7 and Position[1] + 1 <= 7:
-            if board[Position[0] + 1][Position[1] + 1] == "B":
-                king_attacked = True
-        if Position[0] + 1 <= 7 and Position[1] - 1 >= 0:
-            if board[Position[0] + 1][Position[1] - 1] == "B":
-                king_attacked = True
+        if king_pos[0] > 0:
+            if king_pos[1] > 0 and board[king_pos[0]-1][king_pos[1]-1] == "-B":
+                return True
+            if king_pos[1] < 7 and board[king_pos[0]-1][king_pos[1]+1] == "-B":
+                return True
+    else:
+        if king_pos[0] < 7:
+            if king_pos[1] > 0 and board[king_pos[0]+1][king_pos[1]-1] == "B":
+                return True
+            if king_pos[1] < 7 and board[king_pos[0]+1][king_pos[1]+1] == "B":
+                return True
 
-    for direction in direction_Knight:
-        new_row = square[0] + direction[0]
-        new_collum = square[1] + direction[1]
-        if new_row < 0 or new_row > 7 or new_collum < 0 or new_collum > 7:
-            continue
-        if color == "white":
-            if board[new_row][new_collum] == "-S":
-                king_attacked = True
-        if color == "black":
-            if board[new_row][new_collum] == "S":
-                king_attacked = True
+    for dr,dc in direction_Knight:
+        r = king_pos[0] + dr
+        c = king_pos[1] + dc
+        if 0 <= r < 8 and 0 <= c < 8:
+            if color == "white" and board[r][c] == "-S":
+                return True
+            if color == "black" and board[r][c] == "S":
+                return True
 
-    for direction in direction_King:
-        new_row = square[0] + direction[0]
-        new_collum = square[1] + direction[1]
-        if new_row < 0 or new_row > 7 or new_collum < 0 or new_collum > 7:
-            continue
-        if color == "white":
-            if board[new_row][new_collum] == "-K":
-                king_attacked = True
-        if color == "black":
-            if board[new_row][new_collum] == "K":
-                king_attacked = True
-    return king_attacked
+    for dr,dc in direction_King:
+        r = king_pos[0] + dr
+        c = king_pos[1] + dc
+        if 0 <= r < 8 and 0 <= c < 8:
+            if color == "white" and board[r][c] == "-K":
+                return True
+            if color == "black" and board[r][c] == "K":
+                return True
+
+    for dr,dc in direction_diagonal:
+        r = king_pos[0] + dr
+        c = king_pos[1] + dc
+        while 0 <= r < 8 and 0 <= c < 8:
+            piece = board[r][c]
+            if piece != "0":
+                if color == "white" and piece in ("-L","-D"):
+                    return True
+                if color == "black" and piece in ("L","D"):
+                    return True
+                break
+            r += dr
+            c += dc
+
+    for dr,dc in direction_straight:
+        r = king_pos[0] + dr
+        c = king_pos[1] + dc
+        while 0 <= r < 8 and 0 <= c < 8:
+            piece = board[r][c]
+            if piece != "0":
+                if color == "white" and piece in ("-T","-D"):
+                    return True
+                if color == "black" and piece in ("T","D"):
+                    return True
+                break
+            r += dr
+            c += dc
+
+    return False
+
+
 
 
 def rochade_schach(board, square, color):
