@@ -1,92 +1,99 @@
 import sys
-from board import create_board
-from moves import make_move
-from engine import choose_move_iterative, thinking_time
-import moves
-import zobrist
+from board import Board, WHITE, BLACK, QUEEN, ROOK, BISHOP, KNIGHT
+from moves import make_move, generate_legal_moves
+from engine import choose_move_iterative, thinking_time, tt_clear, KILLER, HISTORY
+
+NONE_PIECE = 6
+
+
 def uci_to_square(uci_str):
     col = ord(uci_str[0]) - ord('a')
-    row = 8 - int(uci_str[1])
-    return (row, col)
+    row = int(uci_str[1]) - 1
+    return row * 8 + col
 
-def parse_move(move_str):
-    start = uci_to_square(move_str[0:2])
-    end = uci_to_square(move_str[2:4])
-    promotion = None
-    if len(move_str) == 5:
-        promo_map = {"q": "Queen", "r": "rook", "b": "bishop", "n": "knight"}
-        promotion = promo_map.get(move_str[4])
-    return (start, end, promotion)
 
 def square_to_uci(square):
-    col = chr(ord('a') + square[1])
-    row = 8 - square[0]
+    col = chr(ord('a') + square % 8)
+    row = square // 8 + 1
     return f"{col}{row}"
+
+
+PROMO_CHAR_TO_PIECE = {"q": QUEEN, "r": ROOK, "b": BISHOP, "n": KNIGHT}
+PIECE_TO_PROMO_CHAR = {QUEEN: "q", ROOK: "r", BISHOP: "b", KNIGHT: "n"}
+
+
+def parse_and_apply_move(board, move_str):
+    from_sq = uci_to_square(move_str[0:2])
+    to_sq = uci_to_square(move_str[2:4])
+    promotion = PROMO_CHAR_TO_PIECE.get(move_str[4]) if len(move_str) == 5 else None
+    promo_val = promotion if promotion is not None else NONE_PIECE
+
+    for move in generate_legal_moves(board):
+        if (move & 0x3F) == from_sq and ((move >> 6) & 0x3F) == to_sq and ((move >> 19) & 0x7) == promo_val:
+            make_move(board, move)
+            return True
+    return False
+
+
 def uci_loop():
-    global current_color, board
-    current_color = "white"
-    board = create_board()
-    moves.white_king_pos = (7, 4)
-    moves.black_king_pos = (0, 4)
+    board = Board()
+    color = "white"
+
     while True:
         command = input().strip()
+
         if command == "uci":
-            print("id name MyEngine", flush=True)
+            print("id name Emble", flush=True)
             print("id author Malte", flush=True)
             print("uciok", flush=True)
+
         elif command == "isready":
             print("readyok", flush=True)
+
         elif command == "quit":
             break
+
         elif command.startswith("position"):
             parts = command.split()
-            board = create_board()
-            current_color = "white"
-            moves.white_short = True
-            moves.white_long = True
-            moves.black_short = True
-            moves.black_long = True
-            moves.white_king_pos = (7, 4)
-            moves.black_king_pos = (0, 4)
-            moves.piece_count = 30
-            moves.white_major_count = 3
-            moves.black_major_count = 3
-            moves.last_move = None
-            moves.current_hash = zobrist.compute_hash(board, "white")
-            moves.position_history = {moves.current_hash: 1}
-            moves.halfmove_clock = 0
-            import engine
-            engine.transsquare_table.clear()
-            engine.KILLER = [[None, None] for _ in range(128)]
-            engine.HISTORY = [[0 for _ in range(64)] for _ in range(64)]
+            board = Board()
+            color = "white"
+            tt_clear()
+            for i in range(128):
+                KILLER[i][0] = None
+                KILLER[i][1] = None
+            for i in range(64):
+                for j in range(64):
+                    HISTORY[i][j] = 0
+
             if "moves" in parts:
                 moves_index = parts.index("moves")
                 move_strings = parts[moves_index + 1:]
                 for move_str in move_strings:
-                    start, end, promotion = parse_move(move_str)
-                    make_move(board, start, end, promotion_piece=promotion)
-                    current_color = "black" if current_color == "white" else "white"
+                    parse_and_apply_move(board, move_str)
+                    color = "black" if color == "white" else "white"
+
         elif command.startswith("go"):
             parts = command.split()
             time_limit = thinking_time
             if "movetime" in parts:
                 time_limit = int(parts[parts.index("movetime") + 1]) / 1000.0
-            elif current_color == "white" and "wtime" in parts:
+            elif color == "white" and "wtime" in parts:
                 wtime = int(parts[parts.index("wtime") + 1])
                 time_limit = min(thinking_time, wtime / 30000.0)
-            elif current_color == "black" and "btime" in parts:
+            elif color == "black" and "btime" in parts:
                 btime = int(parts[parts.index("btime") + 1])
                 time_limit = min(thinking_time, btime / 30000.0)
 
-            move = choose_move_iterative(board, current_color, time_limit=time_limit)
+            move = choose_move_iterative(board, color, time_limit=time_limit)
             if move is not None:
-                start_square, end_square, promo = move
-                uci_move = square_to_uci(start_square) + square_to_uci(end_square)
-                promo_char = {"D": "q", "T": "r", "L": "b", "S": "n"}
-                if promo in promo_char:
-                    uci_move += promo_char[promo]
+                mf = move & 0x3F
+                mt = (move >> 6) & 0x3F
+                promo = (move >> 19) & 0x7
+                uci_move = square_to_uci(mf) + square_to_uci(mt)
+                if promo in PIECE_TO_PROMO_CHAR:
+                    uci_move += PIECE_TO_PROMO_CHAR[promo]
                 print(f"bestmove {uci_move}", flush=True)
+
 
 if __name__ == "__main__":
     uci_loop()
-
