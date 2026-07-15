@@ -46,11 +46,3 @@ def update_hash_piece(h, color, piece_type, square):
 
 def update_hash_castling(h, bit_index):
     return h ^ ZOBRIST_CASTLING[bit_index]
-
-
-def update_hash_ep(h, ep_file):
-    return h ^ ZOBRIST_EP_FILE[ep_file]
-
-
-def flip_turn(h):
-    return h ^ ZOBRIST_TURN

@@ -1,17 +1,16 @@
 debug = False
 depth_debug = True
-performance_debug = False
+performance_debug = True
 
 from board import (WHITE, BLACK, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, sq, lsb_index, popcount,
-                    piece_value, piece_square_table_king,piece_square_table_knight, piece_square_table_pawn, piece_square_table_bishop, piece_square_table_rook, piece_square_table_queen, NONE_PIECE)
+                    piece_value, piece_square_table_king, NONE_PIECE)
 from attacks import KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, FILE_MASKS, PASSED_PAWN_MASK_WHITE, PASSED_PAWN_MASK_BLACK
 from moves import (EN_PASSANT, opposite, is_in_check, generate_legal_moves,
                     make_move, unmake_move)
 from magic import (BISHOP_MASKS, BISHOP_MAGICS, BISHOP_SHIFTS, BISHOP_TABLES,
                     ROOK_MASKS, ROOK_MAGICS, ROOK_SHIFTS, ROOK_TABLES)
 from board import FULL
-import magic
-import zobrist
+from zobrist import ZOBRIST_EP_FILE, ZOBRIST_TURN
 import time
 import sys
 import cProfile
@@ -48,35 +47,37 @@ def bewerte_material(board):
     material = 0.0
     white_king_bb = board.bitboards[WHITE][KING]
     black_king_bb = board.bitboards[BLACK][KING]
-    white_king_pos = lsb_index(white_king_bb) if white_king_bb else sq(4, 0)
-    black_king_pos = lsb_index(black_king_bb) if black_king_bb else sq(4, 7)
+    white_king_pos = (white_king_bb & -white_king_bb).bit_length() - 1 if white_king_bb else sq(4, 0)
+    black_king_pos = (black_king_bb & -black_king_bb).bit_length() - 1 if black_king_bb else sq(4, 7)
 
     white_pawn_bb = board.bitboards[WHITE][PAWN]
     black_pawn_bb = board.bitboards[BLACK][PAWN]
     fm = FILE_MASKS
-    white_pawns_per_col = [popcount(white_pawn_bb & fm[0]), popcount(white_pawn_bb & fm[1]),
-                           popcount(white_pawn_bb & fm[2]), popcount(white_pawn_bb & fm[3]),
-                           popcount(white_pawn_bb & fm[4]), popcount(white_pawn_bb & fm[5]),
-                           popcount(white_pawn_bb & fm[6]), popcount(white_pawn_bb & fm[7])]
-    black_pawns_per_col = [popcount(black_pawn_bb & fm[0]), popcount(black_pawn_bb & fm[1]),
-                           popcount(black_pawn_bb & fm[2]), popcount(black_pawn_bb & fm[3]),
-                           popcount(black_pawn_bb & fm[4]), popcount(black_pawn_bb & fm[5]),
-                           popcount(black_pawn_bb & fm[6]), popcount(black_pawn_bb & fm[7])]
-    piece_count = popcount(board.all_occupancy)
+    white_pawns_per_col = [(white_pawn_bb & fm[0]).bit_count(), (white_pawn_bb & fm[1]).bit_count(),
+                           (white_pawn_bb & fm[2]).bit_count(), (white_pawn_bb & fm[3]).bit_count(),
+                           (white_pawn_bb & fm[4]).bit_count(), (white_pawn_bb & fm[5]).bit_count(),
+                           (white_pawn_bb & fm[6]).bit_count(), (white_pawn_bb & fm[7]).bit_count()]
+    black_pawns_per_col = [(black_pawn_bb & fm[0]).bit_count(), (black_pawn_bb & fm[1]).bit_count(),
+                           (black_pawn_bb & fm[2]).bit_count(), (black_pawn_bb & fm[3]).bit_count(),
+                           (black_pawn_bb & fm[4]).bit_count(), (black_pawn_bb & fm[5]).bit_count(),
+                           (black_pawn_bb & fm[6]).bit_count(), (black_pawn_bb & fm[7]).bit_count()]
+    piece_count = board.all_occupancy.bit_count()
 
     bb = white_pawn_bb
     while bb:
-        s = lsb_index(bb); bb &= bb - 1
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
         if (PASSED_PAWN_MASK_WHITE[s] & black_pawn_bb) == 0:
-            material += 0.3 + (6 - (s // 8)) * 0.1
+            material -= 0.3 + (6 - (s >> 3)) * 0.1
     bb = black_pawn_bb
     while bb:
-        s = lsb_index(bb); bb &= bb - 1
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
         if (PASSED_PAWN_MASK_BLACK[s] & white_pawn_bb) == 0:
-            material -= 0.3 + ((s // 8) - 1) * 0.1
+            material += 0.3 + ((s >> 3) - 1) * 0.1
 
-    white_bishops = popcount(board.bitboards[WHITE][BISHOP])
-    black_bishops = popcount(board.bitboards[BLACK][BISHOP])
+    white_bishops = board.bitboards[WHITE][BISHOP].bit_count()
+    black_bishops = board.bitboards[BLACK][BISHOP].bit_count()
     if white_bishops >= 2:
         material -= 0.3
     if black_bishops >= 2:
@@ -85,16 +86,18 @@ def bewerte_material(board):
     white_rooks = []
     bb = board.bitboards[WHITE][ROOK]
     while bb:
-        s = lsb_index(bb); bb &= bb - 1
-        white_rooks.append(s % 8)
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        white_rooks.append(s & 7)
     black_rooks = []
     bb = board.bitboards[BLACK][ROOK]
     while bb:
-        s = lsb_index(bb); bb &= bb - 1
-        black_rooks.append(s % 8)
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        black_rooks.append(s & 7)
 
-    wk_rank, wk_file = white_king_pos // 8, white_king_pos % 8
-    bk_rank, bk_file = black_king_pos // 8, black_king_pos % 8
+    wk_rank, wk_file = white_king_pos >> 3, white_king_pos & 7
+    bk_rank, bk_file = black_king_pos >> 3, black_king_pos & 7
     material -= piece_square_table_king[7 - wk_rank][wk_file] / 100
     material += piece_square_table_king[bk_rank][bk_file] / 100
 
@@ -179,19 +182,15 @@ def bewerte_material(board):
     return total_material + material
 
 
-def _attackers_to(board, square, occ):
+def _attackers_to(board, square, occ, diag, straight):
     attackers = 0
     attackers |= PAWN_ATTACKS[BLACK][square] & board.bitboards[WHITE][PAWN]
     attackers |= PAWN_ATTACKS[WHITE][square] & board.bitboards[BLACK][PAWN]
     attackers |= KNIGHT_ATTACKS[square] & (board.bitboards[WHITE][KNIGHT] | board.bitboards[BLACK][KNIGHT])
     attackers |= KING_ATTACKS[square] & (board.bitboards[WHITE][KING] | board.bitboards[BLACK][KING])
-    diag = (board.bitboards[WHITE][BISHOP] | board.bitboards[WHITE][QUEEN] |
-            board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN])
     masked_b = occ & BISHOP_MASKS[square]
     idx_b = ((masked_b * BISHOP_MAGICS[square]) & FULL) >> BISHOP_SHIFTS[square]
     attackers |= BISHOP_TABLES[square][idx_b] & diag
-    straight = (board.bitboards[WHITE][ROOK] | board.bitboards[WHITE][QUEEN] |
-                board.bitboards[BLACK][ROOK] | board.bitboards[BLACK][QUEEN])
     masked_r = occ & ROOK_MASKS[square]
     idx_r = ((masked_r * ROOK_MAGICS[square]) & FULL) >> ROOK_SHIFTS[square]
     attackers |= ROOK_TABLES[square][idx_r] & straight
@@ -222,10 +221,15 @@ def SEE(board, move):
     if flag == EN_PASSANT:
         occ &= ~(1 << capsq)
 
+    diag = (board.bitboards[WHITE][BISHOP] | board.bitboards[WHITE][QUEEN] |
+            board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN])
+    straight = (board.bitboards[WHITE][ROOK] | board.bitboards[WHITE][QUEEN] |
+                board.bitboards[BLACK][ROOK] | board.bitboards[BLACK][QUEEN])
+
     gains = [piece_value[captured_piece]]
     piece_on_square_value = piece_value[attacker_type]
     side = opposite(attacker_side)
-    attackers_bb = _attackers_to(board, to_sq, occ)
+    attackers_bb = _attackers_to(board, to_sq, occ, diag, straight)
 
     while True:
         sq_att, pt_att = _least_valuable_attacker(board, attackers_bb, side)
@@ -233,7 +237,7 @@ def SEE(board, move):
             break
         gains.append(piece_on_square_value - gains[-1])
         occ &= ~(1 << sq_att)
-        attackers_bb = _attackers_to(board, to_sq, occ)
+        attackers_bb = _attackers_to(board, to_sq, occ, diag, straight)
         piece_on_square_value = piece_value[pt_att]
         side = opposite(side)
 
@@ -248,19 +252,6 @@ def gives_check(board, move):
     result = is_in_check(board, board.side_to_move)
     unmake_move(board)
     return result
-
-
-def _is_ep(move):
-    return move.flag == EN_PASSANT
-
-
-def _victim_score(captured_piece, flag):
-    if flag == EN_PASSANT:
-        return piece_value[PAWN]
-    if captured_piece != NONE_PIECE:
-        return piece_value[captured_piece]
-    return 0
-
 
 def move_score(move, depth, board, piece, captured_piece, flag):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
@@ -316,9 +307,9 @@ def make_null_move(board):
 
     board.ep_square = None
     board.halfmove_clock += 1
-    h = zobrist.flip_turn(board.hash)
+    h = board.hash ^ ZOBRIST_TURN
     if old_ep is not None:
-        h = zobrist.update_hash_ep(h, old_ep & 7)
+        h ^= ZOBRIST_EP_FILE[old_ep & 7]
     board.hash = h
     board.position_history[h] = board.position_history.get(h, 0) + 1
     board.side_to_move = opposite(board.side_to_move)
@@ -375,7 +366,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False):
     has_major_piece = popcount(board.bitboards[own_idx][ROOK] | board.bitboards[own_idx][QUEEN]) > 0
     in_check_now = is_in_check(board, own_idx)
 
-    if depth >= 3 and not in_check_now and not is_null_move and piece_count_nm > 6:
+    if depth >= 3 and not in_check_now and not is_null_move and piece_count_nm > 6 and has_major_piece:
         make_null_move(board)
         null_score = -negamax(board, depth - 3, next_color, -beta, -beta + 1, is_null_move=True)
         unmake_null_move(board)
@@ -520,6 +511,10 @@ def quiescence(board, alpha, beta, color, depth=10):
     if color != "black":
         stand_pat = -stand_pat
 
+    all_moves = generate_legal_moves(board)
+    if not all_moves:
+        return 0
+
     if stand_pat >= beta:
         return beta
     if stand_pat > alpha:
@@ -527,11 +522,12 @@ def quiescence(board, alpha, beta, color, depth=10):
 
     capture_moves = []
     append = capture_moves.append
-    for move in generate_legal_moves(board):
+    for move in all_moves:
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
-        if captured_piece != NONE_PIECE or flag == EN_PASSANT:
-            see_value = SEE(board, move)
+        promotion = (move >> 19) & 0x7
+        if captured_piece != NONE_PIECE or flag == EN_PASSANT or promotion == QUEEN:
+            see_value = SEE(board, move) if captured_piece != NONE_PIECE or flag == EN_PASSANT else 800000
             append((see_value, move))
     capture_moves.sort(key=lambda t: t[0], reverse=True)
 
@@ -647,8 +643,6 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time):
 
     return best_move_overall
 
-    return best_move_overall
-
 def tt_probe(zobrist_hash):
     idx = zobrist_hash & TT_MASK
     if TT_DEPTH[idx] != -1 and TT_HASH[idx] == zobrist_hash:
@@ -670,3 +664,4 @@ def tt_store(zobrist_hash, depth, score, bound, generation, best_move):
 def tt_clear():
     for i in range(TT_SIZE):
         TT_DEPTH[i] = -1
+        EVAL_CACHE.clear()

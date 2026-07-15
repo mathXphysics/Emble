@@ -93,9 +93,29 @@ def is_in_check(board, color):
     king_bb = board.bitboards[color][KING]
     if king_bb == 0:
         return False
-    king_sq = (king_bb & -king_bb).bit_length() - 1
-    return is_square_attacked(board, king_sq, opposite(color))
+    square = (king_bb & -king_bb).bit_length() - 1
+    by_color = opposite(color)
+    occ = board.all_occupancy
 
+    if PAWN_ATTACKS[color][square] & board.bitboards[by_color][PAWN]:
+        return True
+    if KNIGHT_ATTACKS[square] & board.bitboards[by_color][KNIGHT]:
+        return True
+    if KING_ATTACKS[square] & board.bitboards[by_color][KING]:
+        return True
+    diag = board.bitboards[by_color][BISHOP] | board.bitboards[by_color][QUEEN]
+    if diag:
+        masked = occ & BISHOP_MASKS[square]
+        idx = ((masked * BISHOP_MAGICS[square]) & FULL) >> BISHOP_SHIFTS[square]
+        if BISHOP_TABLES[square][idx] & diag:
+            return True
+    straight = board.bitboards[by_color][ROOK] | board.bitboards[by_color][QUEEN]
+    if straight:
+        masked = occ & ROOK_MASKS[square]
+        idx = ((masked * ROOK_MAGICS[square]) & FULL) >> ROOK_SHIFTS[square]
+        if ROOK_TABLES[square][idx] & straight:
+            return True
+    return False
 
 def generate_pseudo_legal_moves(board):
     moves = []
@@ -348,18 +368,18 @@ def make_move(board, move):
 
     if flag == CASTLE_KING:
         if color == WHITE:
-            ZOBRIST_PIECE[color][ROOK][7]
-            h = zobrist.update_hash_piece(h, color, ROOK, 5)
+            h ^= ZOBRIST_PIECE[color][ROOK][7]
+            h ^= ZOBRIST_PIECE[color][ROOK][5]
         else:
-            h = zobrist.update_hash_piece(h, color, ROOK, 63)
-            h = zobrist.update_hash_piece(h, color, ROOK, 61)
+            h ^= ZOBRIST_PIECE[color][ROOK][63]
+            h ^= ZOBRIST_PIECE[color][ROOK][61]
     elif flag == CASTLE_QUEEN:
         if color == WHITE:
-            h = zobrist.update_hash_piece(h, color, ROOK, 0)
-            h = zobrist.update_hash_piece(h, color, ROOK, 3)
+            h ^= ZOBRIST_PIECE[color][ROOK][0]
+            h ^= ZOBRIST_PIECE[color][ROOK][3]
         else:
-            h = zobrist.update_hash_piece(h, color, ROOK, 56)
-            h = zobrist.update_hash_piece(h, color, ROOK, 59)
+            h ^= ZOBRIST_PIECE[color][ROOK][56]
+            h ^= ZOBRIST_PIECE[color][ROOK][59]
 
     changed_cr = old_cr & ~new_cr
     if changed_cr & CR_WHITE_SHORT: h ^= ZOBRIST_CASTLING[0]
@@ -373,8 +393,6 @@ def make_move(board, move):
         h ^= ZOBRIST_EP_FILE[board.ep_square & 7]
 
     board.hash = h ^ ZOBRIST_TURN
-
-    board.hash = zobrist.flip_turn(h)
     board.position_history[board.hash] = board.position_history.get(board.hash, 0) + 1
     board.side_to_move = opp
 

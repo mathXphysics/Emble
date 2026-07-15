@@ -1,3 +1,5 @@
 __pycache__/
 build/
 dist/
+cutechess.cli.exe
+magic_cache.pkl
