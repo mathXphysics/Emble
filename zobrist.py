@@ -46,3 +46,13 @@ def update_hash_piece(h, color, piece_type, square):
 
 def update_hash_castling(h, bit_index):
     return h ^ ZOBRIST_CASTLING[bit_index]
+
+def compute_pawn_hash(board):
+    h = 0
+    for color in (WHITE, BLACK):
+        bb = board.bitboards[color][PAWN]
+        while bb:
+            square = (bb & -bb).bit_length() - 1
+            h ^= ZOBRIST_PIECE[color][PAWN][square]
+            bb &= bb - 1
+    return h

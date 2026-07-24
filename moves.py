@@ -1,6 +1,6 @@
 from board import (WHITE, BLACK, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING,
                     NONE_PIECE, CR_WHITE_SHORT, CR_WHITE_LONG,
-                    CR_BLACK_SHORT, CR_BLACK_LONG, VALUE_TABLE)
+                    CR_BLACK_SHORT, CR_BLACK_LONG, VALUE_TABLE_MG, VALUE_TABLE_EG, PHASE_WEIGHT)
 from attacks import KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, pawn_pushes_single, pawn_pushes_double
 import magic
 from magic import (BISHOP_MASKS, BISHOP_MAGICS, BISHOP_SHIFTS, BISHOP_TABLES,
@@ -269,26 +269,6 @@ def generate_pseudo_legal_moves(board):
                            | (NONE_PIECE << 19) | (CASTLE_QUEEN << 22) | (58 << 25))
 
     return moves
-
-
-def _remove_piece(board, color, piece_type, square):
-    b = 1 << square
-    board.bitboards[color][piece_type] &= ~b
-    board.occupancy[color] &= ~b
-    board.all_occupancy &= ~b
-    board.color_at[square] = -1
-    board.piece_at_sq[square] = NONE_PIECE
-    board.material_score -= VALUE_TABLE[color][piece_type][square]
-
-
-def _add_piece(board, color, piece_type, square):
-    b = 1 << square
-    board.bitboards[color][piece_type] |= b
-    board.occupancy[color] |= b
-    board.all_occupancy |= b
-    board.color_at[square] = color
-    board.piece_at_sq[square] = piece_type
-    board.material_score += VALUE_TABLE[color][piece_type][square]
 
 
 def make_move(board, move):
@@ -594,4 +574,86 @@ def generate_legal_moves_slow(board):
         if not is_in_check(board, color):
             legal.append(move)
         unmake_move(board)
+    return legal
+
+def _remove_piece(board, color, piece_type, square):
+    b = 1 << square
+    board.bitboards[color][piece_type] &= ~b
+    board.occupancy[color] &= ~b
+    board.all_occupancy &= ~b
+    board.color_at[square] = -1
+    board.piece_at_sq[square] = NONE_PIECE
+    board.material_score_mg -= VALUE_TABLE_MG[color][piece_type][square]
+    board.material_score_eg -= VALUE_TABLE_EG[color][piece_type][square]
+    board.phase -= PHASE_WEIGHT[piece_type]
+
+
+def _add_piece(board, color, piece_type, square):
+    b = 1 << square
+    board.bitboards[color][piece_type] |= b
+    board.occupancy[color] |= b
+    board.all_occupancy |= b
+    board.color_at[square] = color
+    board.piece_at_sq[square] = piece_type
+    board.material_score_mg += VALUE_TABLE_MG[color][piece_type][square]
+    board.material_score_eg += VALUE_TABLE_EG[color][piece_type][square]
+    board.phase += PHASE_WEIGHT[piece_type]
+
+
+
+def generate_legal_captures(board):
+    color = board.side_to_move
+    king_bb = board.bitboards[color][KING]
+    if king_bb == 0:
+        return []
+    king_sq = (king_bb & -king_bb).bit_length() - 1
+
+    checkers = _compute_checkers(board, king_sq, color)
+    num_checkers = 0 if checkers == 0 else (1 if (checkers & (checkers - 1)) == 0 else 2)
+
+    pseudo = generate_pseudo_legal_moves(board)
+    candidates = [
+        m for m in pseudo
+        if ((m >> 16) & 0x7) != NONE_PIECE or ((m >> 22) & 0x7) == EN_PASSANT or ((m >> 19) & 0x7) == QUEEN
+    ]
+
+    if num_checkers >= 2:
+        legal = []
+        for move in candidates:
+            if ((move >> 12) & 0x7) != KING:
+                continue
+            make_move(board, move)
+            if not is_in_check(board, color):
+                legal.append(move)
+            unmake_move(board)
+        return legal
+
+    pinned = _compute_pins(board, king_sq, color)
+    evasion_mask = None
+    if num_checkers == 1:
+        checker_sq = (checkers & -checkers).bit_length() - 1
+        evasion_mask = _evasion_mask(board, king_sq, checker_sq)
+
+    legal = []
+    for move in candidates:
+        piece = (move >> 12) & 0x7
+        flag = (move >> 22) & 0x7
+        to_sq = (move >> 6) & 0x3F
+
+        if piece == KING or flag == EN_PASSANT:
+            make_move(board, move)
+            if not is_in_check(board, color):
+                legal.append(move)
+            unmake_move(board)
+            continue
+
+        if evasion_mask is not None and not ((evasion_mask >> to_sq) & 1):
+            continue
+
+        from_sq = move & 0x3F
+        if from_sq in pinned and not ((pinned[from_sq] >> to_sq) & 1):
+            continue
+
+        legal.append(move)
+
     return legal

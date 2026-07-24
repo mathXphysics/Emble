@@ -83,16 +83,47 @@ piece_square_table_king = [
     [+20,+20,+0,+0,+0,+0,+20,+20],
     [+20,+30,+5,+0,+0,+5,+30,+20]
 ]
+piece_square_table_king_endgame = [
+    [-50,-40,-30,-20,-20,-30,-40,-50],
+    [-30,-20,-10,+0,+0,-10,-20,-30],
+    [-30,-10,+20,+30,+30,+20,-10,-30],
+    [-30,-10,+30,+40,+40,+30,-10,-30],
+    [-30,-10,+30,+40,+40,+30,-10,-30],
+    [-30,-10,+20,+30,+30,+20,-10,-30],
+    [-30,-30,+0,+0,+0,+0,-30,-30],
+    [-50,-30,-30,-30,-30,-30,-30,-50]
+]
 
+piece_square_table_pawn_endgame = [
+    [+0,+0,+0,+0,+0,+0,+0,+0],
+    [+10,+15,+15,+20,+20,+15,+15,+10],
+    [+20,+25,+25,+30,+30,+25,+25,+20],
+    [+30,+35,+35,+40,+40,+35,+35,+30],
+    [+45,+50,+50,+55,+55,+50,+50,+45],
+    [+65,+70,+70,+75,+75,+70,+70,+65],
+    [+90,+90,+90,+90,+90,+90,+90,+90],
+    [+0,+0,+0,+0,+0,+0,+0,+0]
+]
+PHASE_WEIGHT = {PAWN: 0, KNIGHT: 1, BISHOP: 1, ROOK: 2, QUEEN: 4, KING: 0}
+MAX_PHASE = 24  # 2*(1+1+2)*2 + 4*2 = 24
 _PST = {PAWN: piece_square_table_pawn, KNIGHT: piece_square_table_knight,
         BISHOP: piece_square_table_bishop, ROOK: piece_square_table_rook,
         QUEEN: piece_square_table_queen, KING: piece_square_table_king}
 
 
-def _build_value_table():
+_PST_MG = {PAWN: piece_square_table_pawn, KNIGHT: piece_square_table_knight,
+           BISHOP: piece_square_table_bishop, ROOK: piece_square_table_rook,
+           QUEEN: piece_square_table_queen, KING: piece_square_table_king}
+
+_PST_EG = {PAWN: piece_square_table_pawn_endgame, KNIGHT: piece_square_table_knight,
+           BISHOP: piece_square_table_bishop, ROOK: piece_square_table_rook,
+           QUEEN: piece_square_table_queen, KING: piece_square_table_king_endgame}
+
+
+def _build_value_table(pst_dict):
     table = [[[0.0] * 64 for _ in range(6)] for _ in range(2)]
     for pt in range(6):
-        pst = _PST[pt]
+        pst = pst_dict[pt]
         val = piece_value[pt]
         for s in range(64):
             rank, file = s // 8, s % 8
@@ -101,7 +132,10 @@ def _build_value_table():
     return table
 
 
-VALUE_TABLE = _build_value_table()
+VALUE_TABLE_MG = _build_value_table(_PST_MG)
+VALUE_TABLE_EG = _build_value_table(_PST_EG)
+VALUE_TABLE = VALUE_TABLE_MG
+
 
 def sq(file, rank):
     return rank * 8 + file
@@ -139,14 +173,18 @@ class Board:
         self.halfmove_clock = 0
         self.history = []
         self._setup_start_position()
-        self.material_score = 0.0
+        self.material_score_mg = 0.0
+        self.material_score_eg = 0.0
+        self.phase = 0
         for color in (WHITE, BLACK):
             for pt in range(6):
                 bb = self.bitboards[color][pt]
                 while bb:
                     s = (bb & -bb).bit_length() - 1
                     bb &= bb - 1
-                    self.material_score += VALUE_TABLE[color][pt][s]
+                    self.material_score_mg += VALUE_TABLE_MG[color][pt][s]
+                    self.material_score_eg += VALUE_TABLE_EG[color][pt][s]
+                    self.phase += PHASE_WEIGHT[pt]
         self.color_at = [-1] * 64
         self.piece_at_sq = [NONE_PIECE] * 64
         for s in range(64):
@@ -210,3 +248,50 @@ class Board:
                 row.append(symbols[piece] if piece else ".")
             print(rank + 1, " ".join(row))
         print("  a b c d e f g h")
+
+    def to_fen(self):
+        piece_symbols = {
+            (WHITE, PAWN): "P", (WHITE, KNIGHT): "N", (WHITE, BISHOP): "B",
+            (WHITE, ROOK): "R", (WHITE, QUEEN): "Q", (WHITE, KING): "K",
+            (BLACK, PAWN): "p", (BLACK, KNIGHT): "n", (BLACK, BISHOP): "b",
+            (BLACK, ROOK): "r", (BLACK, QUEEN): "q", (BLACK, KING): "k",
+        }
+        rows = []
+        for rank in range(7, -1, -1):
+            row = ""
+            empty = 0
+            for file in range(8):
+                square = rank * 8 + file
+                color = self.color_at[square]
+                if color == -1:
+                    empty += 1
+                else:
+                    if empty > 0:
+                        row += str(empty)
+                        empty = 0
+                    row += piece_symbols[(color, self.piece_at_sq[square])]
+            if empty > 0:
+                row += str(empty)
+            rows.append(row)
+        board_part = "/".join(rows)
+
+        side_part = "w" if self.side_to_move == WHITE else "b"
+
+        castle_part = ""
+        if self.castling_rights & CR_WHITE_SHORT: castle_part += "K"
+        if self.castling_rights & CR_WHITE_LONG:  castle_part += "Q"
+        if self.castling_rights & CR_BLACK_SHORT: castle_part += "k"
+        if self.castling_rights & CR_BLACK_LONG:  castle_part += "q"
+        if castle_part == "":
+            castle_part = "-"
+
+        if self.ep_square is not None:
+            col = chr(ord('a') + (self.ep_square & 7))
+            row = (self.ep_square >> 3) + 1
+            ep_part = f"{col}{row}"
+        else:
+            ep_part = "-"
+
+        fullmove = len(self.history) // 2 + 1
+
+        return f"{board_part} {side_part} {castle_part} {ep_part} {self.halfmove_clock} {fullmove}"
