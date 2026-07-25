@@ -378,7 +378,7 @@ def gives_check(board, move):
     unmake_move(board)
     return result
 
-def move_score(move, depth, board, piece, captured_piece, flag):
+def move_score(move, ply, board, piece, captured_piece, flag):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
         see_value = SEE(board, move)
         if see_value > 0:
@@ -387,8 +387,8 @@ def move_score(move, depth, board, piece, captured_piece, flag):
             return 800000, see_value
         else:
             return -100000 + see_value, see_value
-    killer0 = KILLER[depth][0]
-    killer1 = KILLER[depth][1]
+    killer0 = KILLER[ply][0]
+    killer1 = KILLER[ply][1]
     from_sq = move & 0x3F
     to_sq = (move >> 6) & 0x3F
     if killer0 is not None and from_sq == (killer0 & 0x3F) and to_sq == ((killer0 >> 6) & 0x3F):
@@ -398,7 +398,7 @@ def move_score(move, depth, board, piece, captured_piece, flag):
     return HISTORY[from_sq][to_sq], None
 
 
-def ordered_moves(board, moves_list, depth):
+def ordered_moves(board, moves_list, ply):
     scored = []
     append = scored.append
     see_cache = {}
@@ -406,7 +406,7 @@ def ordered_moves(board, moves_list, depth):
         piece = (move >> 12) & 0x7
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
-        s, see_value = move_score(move, depth, board, piece, captured_piece, flag)
+        s, see_value = move_score(move, ply, board, piece, captured_piece, flag)
         if see_value is not None:
             see_cache[move] = see_value
         append((s, move))
@@ -461,13 +461,17 @@ def unmake_null_move(board):
 
 def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_node=False):
     alpha_orig = alpha
-    global NODE_COUNT
+    global NODE_COUNT, SEARCH_ABORTED
     NODE_COUNT += 1
 
-    if board.halfmove_clock >= 100:
-        return 0
-    if board.position_history.get(board.hash, 0) >= 3:
-        return 0
+    own_idx = _ci(color)
+    in_check_now = is_in_check(board, own_idx)
+
+    if not in_check_now:
+        if board.halfmove_clock >= 100:
+            return 0
+        if board.position_history.get(board.hash, 0) >= 3:
+            return 0
     if ply >= 127:
         return eval_cached(board) if color == "black" else -eval_cached(board)
 
@@ -525,6 +529,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             return beta
 
     if time.time() - SEARCH_START > SEARCH_LIMIT:
+        SEARCH_ABORTED = True
         return eval_cached(board) if color == "black" else -eval_cached(board)
     if debug:
         print(f"{'  ' * depth}Tiefe {depth} | {color} | alpha={alpha} beta={beta}", file=sys.stderr)
@@ -535,7 +540,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
     if depth == 0:
         return quiescence(board, alpha, beta, color, ply)
 
-    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), depth)
+    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), ply)
 
     if not moves_list:
         if in_check_now:
@@ -586,6 +591,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         if not skip_futility:
             futility_stand_pat = static_eval
 
+    quiet_tried = []
+
     for move in moves_list:
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
@@ -635,8 +642,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         if move_index == 0:
             score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False)
         else:
-            killer0 = KILLER[depth][0]
-            killer1 = KILLER[depth][1]
+            killer0 = KILLER[ply][0]
+            killer1 = KILLER[ply][1]
             from_sq = move & 0x3F
             to_sq = (move >> 6) & 0x3F
             is_killer = (
@@ -679,28 +686,33 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
         if alpha >= beta:
             if not is_capture:
-                killer0 = KILLER[depth][0]
+                killer0 = KILLER[ply][0]
                 from_sq = move & 0x3F
                 to_sq = (move >> 6) & 0x3F
                 if killer0 is None or (killer0 & 0x3F) != from_sq or ((killer0 >> 6) & 0x3F) != to_sq:
-                    KILLER[depth][1] = KILLER[depth][0]
-                    KILLER[depth][0] = move
+                    KILLER[ply][1] = KILLER[ply][0]
+                    KILLER[ply][0] = move
                 HISTORY[from_sq][to_sq] += depth * depth
+                for qf, qt in quiet_tried:
+                    HISTORY[qf][qt] -= depth * depth // 2
             break
 
+        if not is_capture:
+            quiet_tried.append((from_sq_pv, to_sq_pv))
         move_index += 1
 
-    if not in_check_now and abs(best_score) < MATE_THRESHOLD:
-        error = best_score - static_eval
-        updated = CORRECTION_HISTORY[own_idx][corr_idx] + 0.05 * (error - CORRECTION_HISTORY[own_idx][corr_idx])
-        CORRECTION_HISTORY[own_idx][corr_idx] = max(-2.0, min(2.0, updated))
+    if not SEARCH_ABORTED:
+        if not in_check_now and abs(best_score) < MATE_THRESHOLD:
+            error = best_score - static_eval
+            updated = CORRECTION_HISTORY[own_idx][corr_idx] + 0.05 * (error - CORRECTION_HISTORY[own_idx][corr_idx])
+            CORRECTION_HISTORY[own_idx][corr_idx] = max(-2.0, min(2.0, updated))
 
-    if best_score <= alpha_orig:
-        tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 2, TT_GENERATION, best_move_here)
-    elif best_score >= beta:
-        tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 1, TT_GENERATION, best_move_here)
-    else:
-        tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 0, TT_GENERATION, best_move_here)
+        if best_score <= alpha_orig:
+            tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 2, TT_GENERATION, best_move_here)
+        elif best_score >= beta:
+            tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 1, TT_GENERATION, best_move_here)
+        else:
+            tt_store(zobrist_hash, depth, score_to_tt(best_score, ply), 0, TT_GENERATION, best_move_here)
 
     return best_score
 
@@ -708,16 +720,25 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
     global NODE_COUNT
     NODE_COUNT += 1
 
-    if depth <= 0 or time.time() - SEARCH_START > SEARCH_LIMIT:
+    own_idx = _ci(color)
+    in_check_now = is_in_check(board, own_idx)
+
+    if time.time() - SEARCH_START > SEARCH_LIMIT:
         eval_value = eval_cached(board)
         return eval_value if color == "black" else -eval_value
 
-    own_idx = _ci(color)
-    in_check_now = is_in_check(board, own_idx)
+    if depth <= 0 and not in_check_now:
+        eval_value = eval_cached(board)
+        return eval_value if color == "black" else -eval_value
+
+    if depth <= -8:
+        eval_value = eval_cached(board)
+        return eval_value if color == "black" else -eval_value
+
     next_color = "white" if color == "black" else "black"
 
     if in_check_now:
-        moves_list, _ = ordered_moves(board, generate_legal_moves(board), depth)
+        moves_list, _ = ordered_moves(board, generate_legal_moves(board), ply)
         if not moves_list:
             return -(MATE_VALUE - ply)
 
@@ -778,7 +799,15 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
 
 def choose_move(board, color, depth=5, alpha=-1000000, beta=1000000):
     global SEARCH_ABORTED, NODE_COUNT
-    moves_list, _ = ordered_moves(board, generate_legal_moves(board), depth)
+    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), 0)
+
+    idx = tt_probe(board.hash)
+    if idx != -1:
+        tt_move = TT_MOVE[idx] if TT_MOVE[idx] != -1 else None
+        if tt_move is not None and tt_move in moves_list:
+            moves_list.remove(tt_move)
+            moves_list.insert(0, tt_move)
+
     if not moves_list:
         return None, 0, 0.0, 1.0
 
