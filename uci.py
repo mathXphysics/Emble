@@ -3,7 +3,7 @@ from board import Board, WHITE, BLACK, QUEEN, ROOK, BISHOP, KNIGHT
 from moves import make_move, generate_legal_moves
 from engine import choose_move_iterative, thinking_time, tt_clear, KILLER, HISTORY, MATE_VALUE, MATE_THRESHOLD
 from book import get_book_move
-
+import engine
 NONE_PIECE = 6
 
 

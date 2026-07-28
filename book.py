@@ -1,7 +1,11 @@
 import os
 import random
-import chess
-import chess.polyglot
+try:
+    import chess
+    import chess.polyglot
+    BOOK_AVAILABLE = True
+except ImportError:
+    BOOK_AVAILABLE = False
 from board import QUEEN, ROOK, BISHOP, KNIGHT, NONE_PIECE
 from moves import generate_legal_moves
 
