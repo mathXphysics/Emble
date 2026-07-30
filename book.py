@@ -11,7 +11,7 @@ from moves import generate_legal_moves
 
 _BOOKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "books")
 
-# Reihenfolge = Prioritaet. Erstes Buch mit einem Eintrag fuer die Stellung gewinnt.
+# Order = Prioritie
 BOOK_PATHS = [
     os.path.join(_BOOKS_DIR, "Cerebellum3Merge.bin"),
     os.path.join(_BOOKS_DIR, "Perfect2023.bin"),
