@@ -317,6 +317,69 @@ def bewerte_material(board):
     material -= white_mobility * 0.02
     material += black_mobility * 0.02
 
+    OUTPOST_BONUS_KNIGHT = _s(54, 34, phase)
+    OUTPOST_BONUS_BISHOP = _s(31, 25, phase)
+    REACHABLE_OUTPOST_KNIGHT = _s(31, 23, phase)
+    REACHABLE_OUTPOST_BISHOP = _s(22, 10, phase)
+
+    white_outpost_squares = 0
+    bb = white_pawn_bb
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        f = s & 7
+        r = s >> 3
+        if f > 0: white_outpost_squares |= (1 << ((r + 1) * 8 + f - 1)) if r < 7 else 0
+        if f < 7: white_outpost_squares |= (1 << ((r + 1) * 8 + f + 1)) if r < 7 else 0
+    white_outpost_squares &= ~black_pawn_atk
+
+    black_outpost_squares = 0
+    bb = black_pawn_bb
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        f = s & 7
+        r = s >> 3
+        if f > 0: black_outpost_squares |= (1 << ((r - 1) * 8 + f - 1)) if r > 0 else 0
+        if f < 7: black_outpost_squares |= (1 << ((r - 1) * 8 + f + 1)) if r > 0 else 0
+    black_outpost_squares &= ~white_pawn_atk
+
+    bb = board.bitboards[WHITE][KNIGHT]
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        if (white_outpost_squares >> s) & 1:
+            material -= OUTPOST_BONUS_KNIGHT
+        elif KNIGHT_ATTACKS[s] & white_outpost_squares:
+            material -= REACHABLE_OUTPOST_KNIGHT
+
+    bb = board.bitboards[WHITE][BISHOP]
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        if (white_outpost_squares >> s) & 1:
+            material -= OUTPOST_BONUS_BISHOP
+        elif get_bishop_attacks(s, occ) & white_outpost_squares:
+            material -= REACHABLE_OUTPOST_BISHOP
+
+    bb = board.bitboards[BLACK][KNIGHT]
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        if (black_outpost_squares >> s) & 1:
+            material += OUTPOST_BONUS_KNIGHT
+        elif KNIGHT_ATTACKS[s] & black_outpost_squares:
+            material += REACHABLE_OUTPOST_KNIGHT
+
+    bb = board.bitboards[BLACK][BISHOP]
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        if (black_outpost_squares >> s) & 1:
+            material += OUTPOST_BONUS_BISHOP
+        elif get_bishop_attacks(s, occ) & black_outpost_squares:
+            material += REACHABLE_OUTPOST_BISHOP
+
     _update_threat_tables(phase)
 
     white_minor_t = board.bitboards[WHITE][KNIGHT] | board.bitboards[WHITE][BISHOP]
@@ -417,7 +480,14 @@ def bewerte_material(board):
 
     material += (w_occ & ~white_defended & black_atk_all).bit_count() * _HANGING
     material -= (b_occ & ~black_defended & white_atk_all).bit_count() * _HANGING
-    
+
+    TEMPO = _s(28, 0, phase)
+    if board.side_to_move == WHITE:
+        material -= TEMPO
+    else:
+        material += TEMPO
+
+
     return total_material + material
 
 
