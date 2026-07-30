@@ -4,18 +4,28 @@ performance_debug = False
 
 from board import (WHITE, BLACK, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, sq, lsb_index, popcount,
                     piece_value, piece_square_table_king, NONE_PIECE)
+
 from attacks import KNIGHT_ATTACKS, KING_ATTACKS, PAWN_ATTACKS, FILE_MASKS, PASSED_PAWN_MASK_WHITE, PASSED_PAWN_MASK_BLACK
+
 from moves import (EN_PASSANT, opposite, is_in_check, generate_legal_moves,
                     generate_legal_captures, make_move, unmake_move)
+
 from magic import (BISHOP_MASKS, BISHOP_MAGICS, BISHOP_SHIFTS, BISHOP_TABLES,
                     ROOK_MASKS, ROOK_MAGICS, ROOK_SHIFTS, ROOK_TABLES,
                     get_bishop_attacks, get_rook_attacks, get_queen_attacks)
+
 from board import FULL
+
 from zobrist import ZOBRIST_EP_FILE, ZOBRIST_TURN, compute_pawn_hash
+
 import time
+
 import sys
+
 import cProfile
+
 import pstats
+
 
 TT_SIZE_BITS = 22
 TT_SIZE = 1 << TT_SIZE_BITS
@@ -46,12 +56,18 @@ CORR_HIST_SIZE = 1 << CORR_HIST_BITS
 CORR_HIST_MASK = CORR_HIST_SIZE - 1
 CORRECTION_HISTORY = [[0.0] * CORR_HIST_SIZE for _ in range(2)]
 
+_THREAT_CACHE_PHASE = -1
+_THREAT_BY_MINOR = [0.0] * 7
+_THREAT_BY_ROOK  = [0.0] * 7
+_HANGING         = 0.0
+
 NODE_COUNT = 0
 
 EVAL_CACHE = {}
 
 MATE_VALUE = 100000
 MATE_THRESHOLD = MATE_VALUE - 1000
+
 thinking_time = 21
 SEARCH_ABORTED = False
 
@@ -62,31 +78,68 @@ def _has_pawn(board, color, rank, file):
 
 def bewerte_material(board):
     phase = board.phase
-    if phase > 24:
-        phase = 24  # Sicherheitsnetz falls durch Bug > 24
-    if phase < 0:
-        phase = 0
+    if phase > 24: phase = 24
+    if phase < 0:  phase = 0
+
     total_material = (board.material_score_mg * phase + board.material_score_eg * (24 - phase)) / 24
+
+    non_pawn_material = (
+        (board.bitboards[WHITE][KNIGHT] | board.bitboards[BLACK][KNIGHT]).bit_count() * 3.0 +
+        (board.bitboards[WHITE][BISHOP] | board.bitboards[BLACK][BISHOP]).bit_count() * 3.0 +
+        (board.bitboards[WHITE][ROOK]   | board.bitboards[BLACK][ROOK]).bit_count()   * 5.0 +
+        (board.bitboards[WHITE][QUEEN]  | board.bitboards[BLACK][QUEEN]).bit_count()  * 9.0
+    )
+    if abs(total_material) > 14.0 + non_pawn_material / 64.0:
+        return total_material
+
     material = 0.0
+
+    white_pawn_bb = board.bitboards[WHITE][PAWN]
+    black_pawn_bb = board.bitboards[BLACK][PAWN]
     white_king_bb = board.bitboards[WHITE][KING]
     black_king_bb = board.bitboards[BLACK][KING]
     white_king_pos = (white_king_bb & -white_king_bb).bit_length() - 1 if white_king_bb else sq(4, 0)
     black_king_pos = (black_king_bb & -black_king_bb).bit_length() - 1 if black_king_bb else sq(4, 7)
+    wk_rank = white_king_pos >> 3
+    wk_file = white_king_pos & 7
+    bk_rank = black_king_pos >> 3
+    bk_file = black_king_pos & 7
 
-    white_pawn_bb = board.bitboards[WHITE][PAWN]
-    black_pawn_bb = board.bitboards[BLACK][PAWN]
-    wk_rank, wk_file = white_king_pos >> 3, white_king_pos & 7
-    bk_rank, bk_file = black_king_pos >> 3, black_king_pos & 7
+    occ   = board.all_occupancy
+    w_occ = board.occupancy[WHITE]
+    b_occ = board.occupancy[BLACK]
+
     fm = FILE_MASKS
-    white_pawns_per_col = [(white_pawn_bb & fm[0]).bit_count(), (white_pawn_bb & fm[1]).bit_count(),
-                           (white_pawn_bb & fm[2]).bit_count(), (white_pawn_bb & fm[3]).bit_count(),
-                           (white_pawn_bb & fm[4]).bit_count(), (white_pawn_bb & fm[5]).bit_count(),
-                           (white_pawn_bb & fm[6]).bit_count(), (white_pawn_bb & fm[7]).bit_count()]
-    black_pawns_per_col = [(black_pawn_bb & fm[0]).bit_count(), (black_pawn_bb & fm[1]).bit_count(),
-                           (black_pawn_bb & fm[2]).bit_count(), (black_pawn_bb & fm[3]).bit_count(),
-                           (black_pawn_bb & fm[4]).bit_count(), (black_pawn_bb & fm[5]).bit_count(),
-                           (black_pawn_bb & fm[6]).bit_count(), (black_pawn_bb & fm[7]).bit_count()]
-    piece_count = board.all_occupancy.bit_count()
+    white_pawns_per_col = [
+        (white_pawn_bb & fm[0]).bit_count(), (white_pawn_bb & fm[1]).bit_count(),
+        (white_pawn_bb & fm[2]).bit_count(), (white_pawn_bb & fm[3]).bit_count(),
+        (white_pawn_bb & fm[4]).bit_count(), (white_pawn_bb & fm[5]).bit_count(),
+        (white_pawn_bb & fm[6]).bit_count(), (white_pawn_bb & fm[7]).bit_count()
+    ]
+    black_pawns_per_col = [
+        (black_pawn_bb & fm[0]).bit_count(), (black_pawn_bb & fm[1]).bit_count(),
+        (black_pawn_bb & fm[2]).bit_count(), (black_pawn_bb & fm[3]).bit_count(),
+        (black_pawn_bb & fm[4]).bit_count(), (black_pawn_bb & fm[5]).bit_count(),
+        (black_pawn_bb & fm[6]).bit_count(), (black_pawn_bb & fm[7]).bit_count()
+    ]
+
+    white_pawn_atk = 0
+    black_pawn_atk = 0
+    bb = white_pawn_bb
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        white_pawn_atk |= PAWN_ATTACKS[WHITE][s]
+    bb = black_pawn_bb
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        black_pawn_atk |= PAWN_ATTACKS[BLACK][s]
+
+    white_safe_pawn_atk = white_pawn_atk & ~black_pawn_atk
+    black_safe_pawn_atk = black_pawn_atk & ~white_pawn_atk
+
+    piece_count = occ.bit_count()
 
     bb = white_pawn_bb
     while bb:
@@ -96,11 +149,9 @@ def bewerte_material(board):
             rank = s >> 3
             file = s & 7
             material -= 0.2 + (rank * rank) * 0.03
-            king_dist_to_queen_sq = max(abs(bk_rank - 7), abs(bk_file - file))
-            pawn_dist_to_queen_sq = 7 - rank
-            tempo = 0 if board.side_to_move == BLACK else 1
-            if king_dist_to_queen_sq > pawn_dist_to_queen_sq + tempo:
+            if max(abs(bk_rank - 7), abs(bk_file - file)) > (7 - rank) + (0 if board.side_to_move == BLACK else 1):
                 material -= 0.5
+
     bb = black_pawn_bb
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -109,92 +160,69 @@ def bewerte_material(board):
             rank = s >> 3
             file = s & 7
             material += 0.2 + ((7 - rank) * (7 - rank)) * 0.03
-            king_dist_to_queen_sq = max(abs(wk_rank - 0), abs(wk_file - file))
-            pawn_dist_to_queen_sq = rank
-            tempo = 0 if board.side_to_move == WHITE else 1
-            if king_dist_to_queen_sq > pawn_dist_to_queen_sq + tempo:
+            if max(abs(wk_rank - 0), abs(wk_file - file)) > rank + (0 if board.side_to_move == WHITE else 1):
                 material += 0.5
 
-    white_bishops = board.bitboards[WHITE][BISHOP].bit_count()
-    black_bishops = board.bitboards[BLACK][BISHOP].bit_count()
-    if white_bishops >= 2:
+    if (board.bitboards[WHITE][BISHOP]).bit_count() >= 2:
         material -= 0.3
-    if black_bishops >= 2:
+    if (board.bitboards[BLACK][BISHOP]).bit_count() >= 2:
         material += 0.3
-
-    white_rooks = []
-    bb = board.bitboards[WHITE][ROOK]
-    while bb:
-        s = (bb & -bb).bit_length() - 1
-        bb &= bb - 1
-        white_rooks.append(s & 7)
-    black_rooks = []
-    bb = board.bitboards[BLACK][ROOK]
-    while bb:
-        s = (bb & -bb).bit_length() - 1
-        bb &= bb - 1
-        black_rooks.append(s & 7)
 
     if piece_count <= 6 and abs(total_material) >= 3:
         if total_material < 0:
             edge_dist = min(bk_rank, 7 - bk_rank, bk_file, 7 - bk_file)
             king_dist = max(abs(wk_rank - bk_rank), abs(wk_file - bk_file))
-            material -= (3 - edge_dist) * 0.1
-            material -= (7 - king_dist) * 0.05
-        if total_material > 0:
+            material -= (3 - edge_dist) * 0.1 + (7 - king_dist) * 0.05
+        elif total_material > 0:
             edge_dist = min(wk_rank, 7 - wk_rank, wk_file, 7 - wk_file)
             king_dist = max(abs(bk_rank - wk_rank), abs(bk_file - wk_file))
-            material += (3 - edge_dist) * 0.1
-            material += (7 - king_dist) * 0.05
+            material += (3 - edge_dist) * 0.1 + (7 - king_dist) * 0.05
 
     for file in range(8):
-        if white_pawns_per_col[file] >= 2:
-            material += 0.3 * (white_pawns_per_col[file] - 1)
-        if black_pawns_per_col[file] >= 2:
-            material -= 0.3 * (black_pawns_per_col[file] - 1)
-        if white_pawns_per_col[file] > 0:
-            left = white_pawns_per_col[file - 1] if file > 0 else 0
+        wpc = white_pawns_per_col[file]
+        bpc = black_pawns_per_col[file]
+        if wpc >= 2:
+            material += 0.3 * (wpc - 1)
+        if bpc >= 2:
+            material -= 0.3 * (bpc - 1)
+        if wpc > 0:
+            left  = white_pawns_per_col[file - 1] if file > 0 else 0
             right = white_pawns_per_col[file + 1] if file < 7 else 0
             if left == 0 and right == 0:
-                material += 0.2 * white_pawns_per_col[file]
-        if black_pawns_per_col[file] > 0:
-            left = black_pawns_per_col[file - 1] if file > 0 else 0
+                material += 0.2 * wpc
+        if bpc > 0:
+            left  = black_pawns_per_col[file - 1] if file > 0 else 0
             right = black_pawns_per_col[file + 1] if file < 7 else 0
             if left == 0 and right == 0:
-                material -= 0.2 * black_pawns_per_col[file]
+                material -= 0.2 * bpc
 
     if piece_count > 6:
-        white_undeveloped = 0
-        if (board.bitboards[WHITE][KNIGHT] >> sq(1, 0)) & 1: white_undeveloped += 1
-        if (board.bitboards[WHITE][KNIGHT] >> sq(6, 0)) & 1: white_undeveloped += 1
-        if (board.bitboards[WHITE][BISHOP] >> sq(2, 0)) & 1: white_undeveloped += 1
-        if (board.bitboards[WHITE][BISHOP] >> sq(5, 0)) & 1: white_undeveloped += 1
-        material += white_undeveloped * 0.1
+        if (board.bitboards[WHITE][KNIGHT] >> sq(1, 0)) & 1: material += 0.1
+        if (board.bitboards[WHITE][KNIGHT] >> sq(6, 0)) & 1: material += 0.1
+        if (board.bitboards[WHITE][BISHOP] >> sq(2, 0)) & 1: material += 0.1
+        if (board.bitboards[WHITE][BISHOP] >> sq(5, 0)) & 1: material += 0.1
+        if (board.bitboards[BLACK][KNIGHT] >> sq(1, 7)) & 1: material -= 0.1
+        if (board.bitboards[BLACK][KNIGHT] >> sq(6, 7)) & 1: material -= 0.1
+        if (board.bitboards[BLACK][BISHOP] >> sq(2, 7)) & 1: material -= 0.1
+        if (board.bitboards[BLACK][BISHOP] >> sq(5, 7)) & 1: material -= 0.1
 
-        black_undeveloped = 0
-        if (board.bitboards[BLACK][KNIGHT] >> sq(1, 7)) & 1: black_undeveloped += 1
-        if (board.bitboards[BLACK][KNIGHT] >> sq(6, 7)) & 1: black_undeveloped += 1
-        if (board.bitboards[BLACK][BISHOP] >> sq(2, 7)) & 1: black_undeveloped += 1
-        if (board.bitboards[BLACK][BISHOP] >> sq(5, 7)) & 1: black_undeveloped += 1
-        material -= black_undeveloped * 0.1
-        white_king_safety = 0
+        white_king_safety = 0.0
+        black_king_safety = 0.0
         for dc in (-1, 0, 1):
             c = wk_file + dc
             if 0 <= c <= 7:
                 if wk_rank + 1 <= 7 and (white_pawn_bb >> sq(c, wk_rank + 1)) & 1:
-                    white_king_safety += 1
+                    white_king_safety += 1.0
                 elif wk_rank + 2 <= 7 and (white_pawn_bb >> sq(c, wk_rank + 2)) & 1:
                     white_king_safety += 0.5
-        material -= white_king_safety * 0.25
-
-        black_king_safety = 0
-        for dc in (-1, 0, 1):
             c = bk_file + dc
             if 0 <= c <= 7:
                 if bk_rank - 1 >= 0 and (black_pawn_bb >> sq(c, bk_rank - 1)) & 1:
-                    black_king_safety += 1
+                    black_king_safety += 1.0
                 elif bk_rank - 2 >= 0 and (black_pawn_bb >> sq(c, bk_rank - 2)) & 1:
                     black_king_safety += 0.5
+
+        material -= white_king_safety * 0.25
         material += black_king_safety * 0.25
 
         if 3 <= wk_file <= 4: material += 0.3
@@ -203,42 +231,29 @@ def bewerte_material(board):
         for dc in (-1, 0, 1):
             c = wk_file + dc
             if 0 <= c <= 7:
-                if white_pawns_per_col[c] == 0 and black_pawns_per_col[c] == 0:
-                    material += 0.2
-                elif white_pawns_per_col[c] == 0:
-                    material += 0.1
-        for dc in (-1, 0, 1):
+                if white_pawns_per_col[c] == 0:
+                    material += 0.2 if black_pawns_per_col[c] == 0 else 0.1
             c = bk_file + dc
             if 0 <= c <= 7:
-                if white_pawns_per_col[c] == 0 and black_pawns_per_col[c] == 0:
-                    material -= 0.2
-                elif black_pawns_per_col[c] == 0:
-                    material -= 0.1
+                if black_pawns_per_col[c] == 0:
+                    material -= 0.2 if white_pawns_per_col[c] == 0 else 0.1
 
-        black_major_attackers = 0
-        occ = board.all_occupancy
-        straight_enemy = board.bitboards[BLACK][ROOK] | board.bitboards[BLACK][QUEEN]
-        diag_enemy = board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN]
-        if get_rook_attacks(white_king_pos, occ) & straight_enemy:
-            black_major_attackers += 1
-        if get_bishop_attacks(white_king_pos, occ) & diag_enemy:
-            black_major_attackers += 1
+        straight_enemy_b = board.bitboards[BLACK][ROOK]  | board.bitboards[BLACK][QUEEN]
+        diag_enemy_b     = board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN]
+        straight_enemy_w = board.bitboards[WHITE][ROOK]  | board.bitboards[WHITE][QUEEN]
+        diag_enemy_w     = board.bitboards[WHITE][BISHOP] | board.bitboards[WHITE][QUEEN]
+
+        black_major_attackers  = bool(get_rook_attacks(white_king_pos, occ) & straight_enemy_b)
+        black_major_attackers += bool(get_bishop_attacks(white_king_pos, occ) & diag_enemy_b)
+        white_major_attackers  = bool(get_rook_attacks(black_king_pos, occ) & straight_enemy_w)
+        white_major_attackers += bool(get_bishop_attacks(black_king_pos, occ) & diag_enemy_w)
+
         material += black_major_attackers * 0.4
-
-        white_straight_enemy = board.bitboards[WHITE][ROOK] | board.bitboards[WHITE][QUEEN]
-        white_diag_enemy = board.bitboards[WHITE][BISHOP] | board.bitboards[WHITE][QUEEN]
-        white_major_attackers = 0
-        if get_rook_attacks(black_king_pos, occ) & white_straight_enemy:
-            white_major_attackers += 1
-        if get_bishop_attacks(black_king_pos, occ) & white_diag_enemy:
-            white_major_attackers += 1
         material -= white_major_attackers * 0.4
 
-    occ = board.all_occupancy
-    w_occ = board.occupancy[WHITE]
-    b_occ = board.occupancy[BLACK]
-
     white_mobility = 0
+    black_mobility = 0
+
     bb = board.bitboards[WHITE][ROOK]
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -246,12 +261,11 @@ def bewerte_material(board):
         f = s & 7
         atk = get_rook_attacks(s, occ)
         white_mobility += (atk & ~w_occ).bit_count()
-        if white_pawns_per_col[f] == 0 and black_pawns_per_col[f] == 0:
-            material -= 0.2
-        elif white_pawns_per_col[f] == 0:
-            material -= 0.1
+        if white_pawns_per_col[f] == 0:
+            material -= 0.2 if black_pawns_per_col[f] == 0 else 0.1
+        if (s >> 3) == 6:
+            material -= 0.3
 
-    black_mobility = 0
     bb = board.bitboards[BLACK][ROOK]
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -259,16 +273,17 @@ def bewerte_material(board):
         f = s & 7
         atk = get_rook_attacks(s, occ)
         black_mobility += (atk & ~b_occ).bit_count()
-        if white_pawns_per_col[f] == 0 and black_pawns_per_col[f] == 0:
-            material += 0.2
-        elif black_pawns_per_col[f] == 0:
-            material += 0.1
+        if black_pawns_per_col[f] == 0:
+            material += 0.2 if white_pawns_per_col[f] == 0 else 0.1
+        if (s >> 3) == 1:
+            material += 0.3
 
     bb = board.bitboards[WHITE][KNIGHT]
     while bb:
         s = (bb & -bb).bit_length() - 1
         bb &= bb - 1
         white_mobility += (KNIGHT_ATTACKS[s] & ~w_occ).bit_count()
+
     bb = board.bitboards[BLACK][KNIGHT]
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -280,6 +295,7 @@ def bewerte_material(board):
         s = (bb & -bb).bit_length() - 1
         bb &= bb - 1
         white_mobility += (get_bishop_attacks(s, occ) & ~w_occ).bit_count()
+
     bb = board.bitboards[BLACK][BISHOP]
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -291,6 +307,7 @@ def bewerte_material(board):
         s = (bb & -bb).bit_length() - 1
         bb &= bb - 1
         white_mobility += (get_queen_attacks(s, occ) & ~w_occ).bit_count()
+
     bb = board.bitboards[BLACK][QUEEN]
     while bb:
         s = (bb & -bb).bit_length() - 1
@@ -300,7 +317,107 @@ def bewerte_material(board):
     material -= white_mobility * 0.02
     material += black_mobility * 0.02
 
+    _update_threat_tables(phase)
 
+    white_minor_t = board.bitboards[WHITE][KNIGHT] | board.bitboards[WHITE][BISHOP]
+    black_minor_t = board.bitboards[BLACK][KNIGHT] | board.bitboards[BLACK][BISHOP]
+    white_rook_t  = board.bitboards[WHITE][ROOK]
+    black_rook_t  = board.bitboards[BLACK][ROOK]
+
+    black_piece_types = [
+        board.bitboards[BLACK][PAWN],   board.bitboards[BLACK][KNIGHT],
+        board.bitboards[BLACK][BISHOP], board.bitboards[BLACK][ROOK],
+        board.bitboards[BLACK][QUEEN],
+    ]
+    white_piece_types = [
+        board.bitboards[WHITE][PAWN],   board.bitboards[WHITE][KNIGHT],
+        board.bitboards[WHITE][BISHOP], board.bitboards[WHITE][ROOK],
+        board.bitboards[WHITE][QUEEN],
+    ]
+
+    bb = white_pawn_atk & b_occ & ~black_safe_pawn_atk
+    while bb:
+        t = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        material -= _THREAT_BY_MINOR[_get_piece_type_idx(black_piece_types, t)]
+
+    bb = black_pawn_atk & w_occ & ~white_safe_pawn_atk
+    while bb:
+        t = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        material += _THREAT_BY_MINOR[_get_piece_type_idx(white_piece_types, t)]
+
+    bb = white_minor_t
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        atk = KNIGHT_ATTACKS[s] if (board.bitboards[WHITE][KNIGHT] >> s) & 1 else get_bishop_attacks(s, occ)
+        targets = atk & b_occ & ~black_safe_pawn_atk
+        while targets:
+            t = (targets & -targets).bit_length() - 1
+            targets &= targets - 1
+            material -= _THREAT_BY_MINOR[_get_piece_type_idx(black_piece_types, t)]
+
+    bb = black_minor_t
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        atk = KNIGHT_ATTACKS[s] if (board.bitboards[BLACK][KNIGHT] >> s) & 1 else get_bishop_attacks(s, occ)
+        targets = atk & w_occ & ~white_safe_pawn_atk
+        while targets:
+            t = (targets & -targets).bit_length() - 1
+            targets &= targets - 1
+            material += _THREAT_BY_MINOR[_get_piece_type_idx(white_piece_types, t)]
+
+    bb = white_rook_t
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        targets = get_rook_attacks(s, occ) & b_occ & ~black_safe_pawn_atk
+        while targets:
+            t = (targets & -targets).bit_length() - 1
+            targets &= targets - 1
+            material -= _THREAT_BY_ROOK[_get_piece_type_idx(black_piece_types, t)]
+
+    bb = black_rook_t
+    while bb:
+        s = (bb & -bb).bit_length() - 1
+        bb &= bb - 1
+        targets = get_rook_attacks(s, occ) & w_occ & ~white_safe_pawn_atk
+        while targets:
+            t = (targets & -targets).bit_length() - 1
+            targets &= targets - 1
+            material += _THREAT_BY_ROOK[_get_piece_type_idx(white_piece_types, t)]
+
+    white_atk_all = 0
+    tmp = white_minor_t | white_rook_t | board.bitboards[WHITE][QUEEN]
+    while tmp:
+        a = (tmp & -tmp).bit_length() - 1
+        tmp &= tmp - 1
+        if   (board.bitboards[WHITE][KNIGHT] >> a) & 1: white_atk_all |= KNIGHT_ATTACKS[a]
+        elif (board.bitboards[WHITE][BISHOP] >> a) & 1: white_atk_all |= get_bishop_attacks(a, occ)
+        elif (board.bitboards[WHITE][ROOK]   >> a) & 1: white_atk_all |= get_rook_attacks(a, occ)
+        else:                                            white_atk_all |= get_queen_attacks(a, occ)
+
+    black_atk_all = 0
+    tmp = black_minor_t | black_rook_t | board.bitboards[BLACK][QUEEN]
+    while tmp:
+        a = (tmp & -tmp).bit_length() - 1
+        tmp &= tmp - 1
+        if   (board.bitboards[BLACK][KNIGHT] >> a) & 1: black_atk_all |= KNIGHT_ATTACKS[a]
+        elif (board.bitboards[BLACK][BISHOP] >> a) & 1: black_atk_all |= get_bishop_attacks(a, occ)
+        elif (board.bitboards[BLACK][ROOK]   >> a) & 1: black_atk_all |= get_rook_attacks(a, occ)
+        else:                                            black_atk_all |= get_queen_attacks(a, occ)
+
+    white_king_atk = KING_ATTACKS[white_king_pos]
+    black_king_atk = KING_ATTACKS[black_king_pos]
+
+    white_defended = white_pawn_atk | white_atk_all | white_king_atk
+    black_defended = black_pawn_atk | black_atk_all | black_king_atk
+
+    material += (w_occ & ~white_defended & black_atk_all).bit_count() * _HANGING
+    material -= (b_occ & ~black_defended & white_atk_all).bit_count() * _HANGING
+    
     return total_material + material
 
 
@@ -389,7 +506,7 @@ def gives_check(board, move):
     unmake_move(board)
     return result
 
-def move_score(move, ply, board, piece, captured_piece, flag):
+def move_score(move, ply, board, piece, captured_piece, flag, cont_hist_stack=None):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
         see_value = SEE(board, move)
         if see_value > 0:
@@ -708,7 +825,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 piece_moved = (move >> 12) & 0x7
                 CONT_HISTORY[piece_moved][to_sq] += depth * depth
                 for qf, qt in quiet_tried:
-                    qpiece = (quiet_tried_pieces.get((qf, qt), 0))
+                    qpiece = quiet_tried_pieces.get((qf, qt), 0)
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
             break
 
@@ -1045,3 +1162,44 @@ def _side_has_hanging_piece(board, side):
             if defenders == 0:
                 return True
     return False
+
+
+
+
+
+def _attackers_to_sq(board, s, occ):
+    return (
+        (PAWN_ATTACKS[WHITE][s] & board.bitboards[BLACK][PAWN]) |
+        (PAWN_ATTACKS[BLACK][s] & board.bitboards[WHITE][PAWN]) |
+        (KNIGHT_ATTACKS[s] & (board.bitboards[WHITE][KNIGHT] | board.bitboards[BLACK][KNIGHT])) |
+        (get_bishop_attacks(s, occ) & (
+            board.bitboards[WHITE][BISHOP] | board.bitboards[BLACK][BISHOP] |
+            board.bitboards[WHITE][QUEEN]  | board.bitboards[BLACK][QUEEN]
+        )) |
+        (get_rook_attacks(s, occ) & (
+            board.bitboards[WHITE][ROOK] | board.bitboards[BLACK][ROOK] |
+            board.bitboards[WHITE][QUEEN] | board.bitboards[BLACK][QUEEN]
+        )) |
+        (KING_ATTACKS[s] & (board.bitboards[WHITE][KING] | board.bitboards[BLACK][KING]))
+    )
+
+
+
+def _s(mg, eg, phase):
+    return (mg * phase + eg * (24 - phase)) / 2400
+
+def _get_piece_type_idx(bbs_list, t):
+    for i, bbs in enumerate(bbs_list):
+        if (bbs >> t) & 1:
+            return i + 1
+    return 0
+
+
+def _update_threat_tables(phase):
+    global _THREAT_CACHE_PHASE, _THREAT_BY_MINOR, _THREAT_BY_ROOK, _HANGING
+    if phase == _THREAT_CACHE_PHASE:
+        return
+    _THREAT_CACHE_PHASE = phase
+    _THREAT_BY_MINOR = [0.0, _s(5,32,phase), _s(55,41,phase), _s(55,41,phase), _s(76,76,phase), _s(76,76,phase), 0.0]
+    _THREAT_BY_ROOK  = [0.0, _s(3,44,phase), _s(37,68,phase), _s(37,68,phase), 0.0, _s(42,60,phase), 0.0]
+    _HANGING         = _s(69, 36, phase)
