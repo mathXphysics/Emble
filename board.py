@@ -163,7 +163,7 @@ def iter_squares(bb):
 
 
 class Board:
-    def __init__(self):
+    def __init__(self, fen=None):
         self.bitboards = [[0] * 6 for _ in range(2)]
         self.occupancy = [0, 0]
         self.all_occupancy = 0
@@ -172,7 +172,10 @@ class Board:
         self.ep_square = None
         self.halfmove_clock = 0
         self.history = []
-        self._setup_start_position()
+        if fen is None:
+            self._setup_start_position()
+        else:
+            self._setup_from_fen(fen)
         self.material_score_mg = 0.0
         self.material_score_eg = 0.0
         self.phase = 0
@@ -211,6 +214,53 @@ class Board:
         bb[BLACK][KING]   = bb_of_square(sq(4,7))
 
         self._recompute_occupancy()
+
+    def _setup_from_fen(self, fen):
+        board_part, side_part, castle_part, ep_part, halfmove_part, fullmove_part = fen.split()
+
+        piece_map = {
+            "P": (WHITE, PAWN), "N": (WHITE, KNIGHT), "B": (WHITE, BISHOP),
+            "R": (WHITE, ROOK), "Q": (WHITE, QUEEN), "K": (WHITE, KING),
+            "p": (BLACK, PAWN), "n": (BLACK, KNIGHT), "b": (BLACK, BISHOP),
+            "r": (BLACK, ROOK), "q": (BLACK, QUEEN), "k": (BLACK, KING),
+        }
+
+        for rank_index, row in enumerate(board_part.split("/")):
+            rank = 7 - rank_index
+            file = 0
+            for char in row:
+                if char.isdigit():
+                    file += int(char)
+                else:
+                    color, pt = piece_map[char]
+                    self.bitboards[color][pt] |= bb_of_square(sq(file, rank))
+                    file += 1
+
+        self._recompute_occupancy()
+
+        self.side_to_move = WHITE if side_part == "w" else BLACK
+
+        self.castling_rights = 0
+        if "K" in castle_part: self.castling_rights |= CR_WHITE_SHORT
+        if "Q" in castle_part: self.castling_rights |= CR_WHITE_LONG
+        if "k" in castle_part: self.castling_rights |= CR_BLACK_SHORT
+        if "q" in castle_part: self.castling_rights |= CR_BLACK_LONG
+
+        if ep_part == "-":
+            self.ep_square = None
+        else:
+            self.ep_square = sq(ord(ep_part[0]) - ord('a'), int(ep_part[1]) - 1)
+
+        self.halfmove_clock = int(halfmove_part)
+
+        ply_count = (int(fullmove_part) - 1) * 2
+        if self.side_to_move == BLACK:
+            ply_count += 1
+        self.history = [None] * ply_count
+
+
+
+
 
     def _recompute_occupancy(self):
         self.occupancy[WHITE] = 0

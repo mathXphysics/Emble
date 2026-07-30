@@ -84,8 +84,6 @@ def uci_loop():
 
         elif command.startswith("position"):
             parts = command.split()
-            board = Board()
-            color = "white"
             tt_clear()
             for i in range(128):
                 KILLER[i][0] = None
@@ -94,8 +92,17 @@ def uci_loop():
                 for j in range(64):
                     HISTORY[i][j] = 0
 
+            moves_index = parts.index("moves") if "moves" in parts else len(parts)
+
+            if parts[1] == "fen":
+                fen_string = " ".join(parts[2:moves_index])
+                board = Board(fen=fen_string)
+            else:
+                board = Board()
+
+            color = "white" if board.side_to_move == WHITE else "black"
+
             if "moves" in parts:
-                moves_index = parts.index("moves")
                 move_strings = parts[moves_index + 1:]
                 for move_str in move_strings:
                     parse_and_apply_move(board, move_str)
