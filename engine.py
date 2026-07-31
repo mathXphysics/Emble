@@ -26,6 +26,8 @@ import cProfile
 
 import pstats
 
+import math
+
 
 TT_SIZE_BITS = 22
 TT_SIZE = 1 << TT_SIZE_BITS
@@ -48,6 +50,7 @@ KILLER = [[None, None] for _ in range(128)]
 
 HISTORY = [[0 for _ in range(64)] for _ in range(64)]
 CONT_HISTORY = [[0 for _ in range(64)] for _ in range(13)]
+CONT_HIST_PREV = [[[[0 for _ in range(64)] for _ in range(7)] for _ in range(64)] for _ in range(7)]
 
 STATIC_EVAL = [0.0] * 128
 
@@ -63,13 +66,26 @@ _HANGING         = 0.0
 
 NODE_COUNT = 0
 
-EVAL_CACHE = {}
+EVAL_CACHE_BITS = 18
+EVAL_CACHE_SIZE = 1 << EVAL_CACHE_BITS
+EVAL_CACHE_MASK = EVAL_CACHE_SIZE - 1
+EVAL_CACHE_HASH = [0] * EVAL_CACHE_SIZE
+EVAL_CACHE_VALUE = [0.0] * EVAL_CACHE_SIZE
+EVAL_CACHE_USED = bytearray(EVAL_CACHE_SIZE)
 
 MATE_VALUE = 100000
 MATE_THRESHOLD = MATE_VALUE - 1000
 
+HISTORY_MAX = 500000
+
 thinking_time = 21
 SEARCH_ABORTED = False
+
+
+_LMR_TABLE = [[0] * 64 for _ in range(64)]
+for _d in range(1, 64):
+    for _m in range(1, 64):
+        _LMR_TABLE[_d][_m] = max(0, int(0.35 + math.log(_d) * math.log(_m) * 0.55))
 
 
 
@@ -576,7 +592,7 @@ def gives_check(board, move):
     unmake_move(board)
     return result
 
-def move_score(move, ply, board, piece, captured_piece, flag, cont_hist_stack=None):
+def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, prev_to=None):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
         see_value = SEE(board, move)
         if see_value > 0:
@@ -594,10 +610,17 @@ def move_score(move, ply, board, piece, captured_piece, flag, cont_hist_stack=No
     if killer1 is not None and from_sq == (killer1 & 0x3F) and to_sq == ((killer1 >> 6) & 0x3F):
         return 600000, None
     cont = CONT_HISTORY[piece][to_sq] if piece is not None else 0
-    return HISTORY[from_sq][to_sq] + cont, None
+    if prev_piece is not None:
+        cont += CONT_HIST_PREV[prev_piece][prev_to][piece][to_sq]
+    total = HISTORY[from_sq][to_sq] + cont
+    if total > HISTORY_MAX:
+        total = HISTORY_MAX
+    elif total < -HISTORY_MAX:
+        total = -HISTORY_MAX
+    return total, None
 
 
-def ordered_moves(board, moves_list, ply):
+def ordered_moves(board, moves_list, ply, prev_piece=None, prev_to=None):
     scored = []
     append = scored.append
     see_cache = {}
@@ -605,7 +628,7 @@ def ordered_moves(board, moves_list, ply):
         piece = (move >> 12) & 0x7
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
-        s, see_value = move_score(move, ply, board, piece, captured_piece, flag)
+        s, see_value = move_score(move, ply, board, piece, captured_piece, flag, prev_piece, prev_to)
         if see_value is not None:
             see_cache[move] = see_value
         append((s, move))
@@ -619,10 +642,13 @@ def _ci(color):
 
 def eval_cached(board):
     key = board.hash
-    if key in EVAL_CACHE:
-        return EVAL_CACHE[key]
+    idx = key & EVAL_CACHE_MASK
+    if EVAL_CACHE_USED[idx] and EVAL_CACHE_HASH[idx] == key:
+        return EVAL_CACHE_VALUE[idx]
     v = bewerte_material(board)
-    EVAL_CACHE[key] = v
+    EVAL_CACHE_HASH[idx] = key
+    EVAL_CACHE_VALUE[idx] = v
+    EVAL_CACHE_USED[idx] = 1
     return v
 
 
@@ -665,12 +691,13 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     own_idx = _ci(color)
     in_check_now = is_in_check(board, own_idx)
+    prev_piece = (prev_move >> 12) & 0x7 if prev_move is not None else None
+    prev_to = (prev_move >> 6) & 0x3F if prev_move is not None else None
 
-    if not in_check_now:
-        if board.halfmove_clock >= 100:
-            return 0
-        if board.position_history.get(board.hash, 0) >= 3:
-            return 0
+    if board.halfmove_clock >= 100:
+        return 0
+    if board.position_history.get(board.hash, 0) >= 3:
+        return 0
     if ply >= 127:
         return eval_cached(board) if color == "black" else -eval_cached(board)
 
@@ -717,7 +744,11 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         if static_eval - rfp_margin >= beta:
             return static_eval
 
-    if depth >= 4 and not in_check_now and not is_null_move and piece_count_nm > 6 and has_major_piece:
+    if (
+            depth >= 4 and not in_check_now and not is_null_move
+            and piece_count_nm > 6 and has_major_piece
+            and abs(beta) < MATE_THRESHOLD
+    ):
         r = min(3, depth // 3 + 1)
         make_null_move(board)
         null_score = -negamax(board, depth - 1 - r, next_color, -beta, -beta + 1,
@@ -738,7 +769,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
     if depth == 0:
         return quiescence(board, alpha, beta, color, ply)
 
-    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), ply)
+    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), ply, prev_piece, prev_to)
 
     if not moves_list:
         if in_check_now:
@@ -784,7 +815,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     futility_stand_pat = None
     skip_futility = False
-    if depth == 1 and not in_check_now:
+    if depth <= 3 and not in_check_now:
         skip_futility = _side_has_hanging_piece(board, own_idx)
         if not skip_futility:
             futility_stand_pat = static_eval
@@ -806,7 +837,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 and not is_capture
                 and move != tt_move
         ):
-            lmp_limit = (4 + depth * depth) if improving else (2 + depth * depth // 2)
+            lmp_limit = (4 + 4 * depth) if improving else (2 + 2 * depth)
             if move_index >= lmp_limit:
                 move_index += 1
                 continue
@@ -821,13 +852,14 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 and move != tt_move
                 and not in_check_now
         ):
-            see_margin = -0.9 * depth * depth
+            see_margin = -1.0 * depth
             if see_cache.get(move, 0) < see_margin:
                 move_index += 1
                 continue
 
-        if move_index > 0 and depth == 1 and not in_check_now and not is_capture and not skip_futility:
-            if futility_stand_pat + 3 < alpha:
+        if move_index > 0 and depth <= 3 and not in_check_now and not is_capture and not skip_futility:
+            futility_margin = 1.0 + 1.5 * depth
+            if futility_stand_pat + futility_margin < alpha:
                 move_index += 1
                 continue
         make_move(board, move)
@@ -839,7 +871,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             new_depth += extension
 
         if move_index == 0:
-            score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False)
+            score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False,
+                                    prev_move=move)
         else:
             killer0 = KILLER[ply][0]
             killer1 = KILLER[ply][1]
@@ -861,18 +894,20 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 can_reduce = False
 
             if can_reduce:
-                reduction = 1 + move_index // 6
+                reduction = _LMR_TABLE[min(new_depth, 63)][min(move_index, 63)]
                 if cut_node:
+                    reduction += 1
+                if not improving:
                     reduction += 1
                 reduced_depth = max(1, new_depth - reduction)
             else:
                 reduced_depth = new_depth
 
             score_result = -negamax(board, reduced_depth, next_color, -alpha - 1, -alpha,
-                                    ply=ply + 1, cut_node=True)
+                                    ply=ply + 1, cut_node=True, prev_move=move)
             if score_result > alpha:
                 score_result = -negamax(board, new_depth, next_color, -beta, -alpha,
-                                        ply=ply + 1, cut_node=False)
+                                        ply=ply + 1, cut_node=False, prev_move=move)
 
         unmake_move(board)
 
@@ -894,9 +929,13 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 HISTORY[from_sq][to_sq] += depth * depth
                 piece_moved = (move >> 12) & 0x7
                 CONT_HISTORY[piece_moved][to_sq] += depth * depth
+                if prev_piece is not None:
+                    CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] += depth * depth
                 for qf, qt in quiet_tried:
                     qpiece = quiet_tried_pieces.get((qf, qt), 0)
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
+                    if prev_piece is not None:
+                        CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] -= depth * depth // 2
             break
 
         if not is_capture:
@@ -974,7 +1013,7 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
         stand_pat = -stand_pat
 
     if stand_pat >= beta:
-        return beta
+        return stand_pat
     if stand_pat > alpha:
         alpha = stand_pat
 
@@ -988,6 +1027,7 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
         append((see_value, move))
     capture_moves.sort(key=lambda t: t[0], reverse=True)
 
+    best = stand_pat
     for see_value, move in capture_moves:
         if see_value < 0:
             continue
@@ -1002,12 +1042,14 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
         score = -quiescence(board, -beta, -alpha, next_color, ply + 1, depth - 1)
         unmake_move(board)
 
-        if score >= beta:
-            return beta
+        if score > best:
+            best = score
         if score > alpha:
             alpha = score
+        if alpha >= beta:
+            break
 
-    return alpha
+    return best
 
 def choose_move(board, color, depth=5, alpha=-1000000, beta=1000000):
     global SEARCH_ABORTED, NODE_COUNT
@@ -1080,6 +1122,11 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
     for i in range(13):
         for j in range(64):
             CONT_HISTORY[i][j] //= 2
+    for pp in range(7):
+        for pt in range(64):
+            for p in range(7):
+                for t in range(64):
+                    CONT_HIST_PREV[pp][pt][p][t] //= 2
     TT_GENERATION += 1
     SEARCH_ABORTED = False
     SEARCH_START = time.time()
@@ -1091,8 +1138,6 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
     prev_move = None
     stability_count = 0
 
-    if len(EVAL_CACHE) > 100000:
-        EVAL_CACHE.clear()
 
     for depth in range(1, max_depth + 1):
         if time.time() - SEARCH_START > SEARCH_LIMIT:
@@ -1193,7 +1238,7 @@ def tt_store(zobrist_hash, depth, score, bound, generation, best_move):
 def tt_clear():
     for i in range(TT_SIZE):
         TT_DEPTH[i] = -1
-    EVAL_CACHE.clear()
+
 
 def score_to_tt(score, ply):
     if score >= MATE_THRESHOLD:
