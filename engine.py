@@ -691,6 +691,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     own_idx = _ci(color)
     in_check_now = is_in_check(board, own_idx)
+    is_pv = (beta - alpha) > 1
     prev_piece = (prev_move >> 12) & 0x7 if prev_move is not None else None
     prev_to = (prev_move >> 6) & 0x3F if prev_move is not None else None
 
@@ -737,6 +738,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             depth <= 6
             and not in_check_now
             and not is_null_move
+            and not is_pv
             and abs(alpha) < MATE_THRESHOLD
             and abs(beta) < MATE_THRESHOLD
     ):
@@ -746,6 +748,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     if (
             depth >= 4 and not in_check_now and not is_null_move
+            and not is_pv
             and piece_count_nm > 6 and has_major_piece
             and abs(beta) < MATE_THRESHOLD
     ):
@@ -760,6 +763,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
     if time.time() - SEARCH_START > SEARCH_LIMIT:
         SEARCH_ABORTED = True
         return eval_cached(board) if color == "black" else -eval_cached(board)
+
     if debug:
         print(f"{'  ' * depth}Tiefe {depth} | {color} | alpha={alpha} beta={beta}", file=sys.stderr)
 
@@ -834,6 +838,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 move_index > 0
                 and depth <= 8
                 and not in_check_now
+                and not is_pv
                 and not is_capture
                 and move != tt_move
         ):
@@ -851,17 +856,19 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 and is_capture
                 and move != tt_move
                 and not in_check_now
+                and not is_pv
         ):
             see_margin = -1.0 * depth
             if see_cache.get(move, 0) < see_margin:
                 move_index += 1
                 continue
 
-        if move_index > 0 and depth <= 3 and not in_check_now and not is_capture and not skip_futility:
+        if move_index > 0 and depth <= 3 and not in_check_now and not is_pv and not is_capture and not skip_futility:
             futility_margin = 1.0 + 1.5 * depth
             if futility_stand_pat + futility_margin < alpha:
                 move_index += 1
                 continue
+                
         make_move(board, move)
         new_depth = depth - 1
         gives_check_now = is_in_check(board, board.side_to_move)
