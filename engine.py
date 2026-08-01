@@ -794,6 +794,9 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         moves_list.remove(tt_move)
         moves_list.insert(0, tt_move)
 
+    MULTICUT_MAX_MOVES = 6
+    MULTICUT_THRESHOLD = 3
+
     extension = 0
     if (
             depth >= 6
@@ -806,22 +809,30 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         singular_beta = beta - (0.5 + 0.1 * depth)
         reduced_depth = (depth - 1) // 2
         fail_high_count = 0
+        mc_fail_high_count = 0
         best_alt_score = -9999999
+        tested = 0
         for alt_move in moves_list:
             if alt_move == tt_move:
                 continue
+            tested += 1
             make_move(board, alt_move)
             alt_score = -negamax(board, reduced_depth, next_color, -singular_beta - 1, -singular_beta,
                                  ply=ply + 1, cut_node=True)
             unmake_move(board)
             if alt_score > best_alt_score:
                 best_alt_score = alt_score
+            if alt_score >= beta:
+                mc_fail_high_count += 1
             if alt_score >= singular_beta:
-                extension = 0
                 fail_high_count += 1
-                break
-            if fail_high_count == 0:
+                extension = 0
+            elif fail_high_count == 0:
                 extension = 2 if (singular_beta - best_alt_score) > 1.5 else 1
+            if not is_pv and cut_node and mc_fail_high_count >= MULTICUT_THRESHOLD:
+                return beta
+            if tested >= MULTICUT_MAX_MOVES and fail_high_count > 0:
+                break
 
     best_score = -9999999
     best_move_here = None
