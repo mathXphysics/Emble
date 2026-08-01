@@ -32,7 +32,6 @@ import math
 TT_SIZE_BITS = 22
 TT_SIZE = 1 << TT_SIZE_BITS
 TT_MASK = TT_SIZE - 1
-
 TT_HASH  = [0] * TT_SIZE
 TT_DEPTH = [-1] * TT_SIZE
 TT_SCORE = [0.0] * TT_SIZE
@@ -49,8 +48,11 @@ move_stack = []
 KILLER = [[None, None] for _ in range(128)]
 
 HISTORY = [[0 for _ in range(64)] for _ in range(64)]
+
 CONT_HISTORY = [[0 for _ in range(64)] for _ in range(13)]
 CONT_HIST_PREV = [[[[0 for _ in range(64)] for _ in range(7)] for _ in range(64)] for _ in range(7)]
+
+CAPTURE_HISTORY = [[[0 for _ in range(7)] for _ in range(64)] for _ in range(6)]
 
 STATIC_EVAL = [0.0] * 128
 
@@ -595,12 +597,20 @@ def gives_check(board, move):
 def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, prev_to=None):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
         see_value = SEE(board, move)
+        to_sq = (move >> 6) & 0x3F
+        captured_type = PAWN if flag == EN_PASSANT else captured_piece
+        cap_hist = CAPTURE_HISTORY[piece][to_sq][captured_type]
+        if cap_hist > HISTORY_MAX:
+            cap_hist = HISTORY_MAX
+        elif cap_hist < -HISTORY_MAX:
+            cap_hist = -HISTORY_MAX
+        cap_bonus = cap_hist / 5000.0
         if see_value > 0:
-            return 900000 + see_value, see_value
+            return 900000 + see_value + cap_bonus, see_value
         elif see_value == 0:
-            return 800000, see_value
+            return 800000 + cap_bonus, see_value
         else:
-            return -100000 + see_value, see_value
+            return -100000 + see_value + cap_bonus, see_value
     killer0 = KILLER[ply][0]
     killer1 = KILLER[ply][1]
     from_sq = move & 0x3F
@@ -826,6 +836,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     quiet_tried = []
     quiet_tried_pieces = {}
+    captures_tried = []
 
     for move in moves_list:
         captured_piece = (move >> 16) & 0x7
@@ -943,6 +954,15 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
                     if prev_piece is not None:
                         CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] -= depth * depth // 2
+            else:
+                to_sq = (move >> 6) & 0x3F
+                piece_moved = (move >> 12) & 0x7
+                captured_now = (move >> 16) & 0x7
+                flag_now = (move >> 22) & 0x7
+                captured_type_now = PAWN if flag_now == EN_PASSANT else captured_now
+                CAPTURE_HISTORY[piece_moved][to_sq][captured_type_now] += depth * depth
+                for cf_piece, cto, ccap in captures_tried:
+                    CAPTURE_HISTORY[cf_piece][cto][ccap] -= depth * depth // 2
             break
 
         if not is_capture:
@@ -950,14 +970,15 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             to_sq_qt = (move >> 6) & 0x3F
             quiet_tried.append((from_sq_qt, to_sq_qt))
             quiet_tried_pieces[(from_sq_qt, to_sq_qt)] = (move >> 12) & 0x7
+        else:
+            to_sq_ct = (move >> 6) & 0x3F
+            piece_ct = (move >> 12) & 0x7
+            captured_ct = (move >> 16) & 0x7
+            flag_ct = (move >> 22) & 0x7
+            captured_type_ct = PAWN if flag_ct == EN_PASSANT else captured_ct
+            captures_tried.append((piece_ct, to_sq_ct, captured_type_ct))
         move_index += 1
 
-    if alpha >= beta and is_capture:
-        see_val = see_cache.get(move, 0)
-        if see_val < 0:
-            from_sq = move & 0x3F
-            to_sq = (move >> 6) & 0x3F
-            HISTORY[from_sq][to_sq] -= depth * depth // 2
 
     if not SEARCH_ABORTED:
         if not in_check_now and corr_idx is not None and abs(best_score) < MATE_THRESHOLD:
@@ -1134,6 +1155,10 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
             for p in range(7):
                 for t in range(64):
                     CONT_HIST_PREV[pp][pt][p][t] //= 2
+    for p in range(6):
+        for t in range(64):
+            for c in range(7):
+                CAPTURE_HISTORY[p][t][c] //= 2
     TT_GENERATION += 1
     SEARCH_ABORTED = False
     SEARCH_START = time.time()
