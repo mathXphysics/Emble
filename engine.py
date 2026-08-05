@@ -1088,6 +1088,37 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
         if alpha >= beta:
             break
 
+    if depth == 10 and alpha < beta and abs(alpha) < MATE_THRESHOLD and stand_pat + 1.0 > alpha:
+        opp_idx = 1 - own_idx
+        enemy_king_bb = board.bitboards[opp_idx][KING]
+        if enemy_king_bb:
+            enemy_king_sq = lsb_index(enemy_king_bb)
+            candidates_scanned = 0
+            checks_searched = 0
+            for move in generate_legal_moves(board):
+                captured_piece_qc = (move >> 16) & 0x7
+                flag_qc = (move >> 22) & 0x7
+                if captured_piece_qc != NONE_PIECE or flag_qc == EN_PASSANT:
+                    continue
+                if candidates_scanned >= 12:
+                    break
+                candidates_scanned += 1
+                if not _gives_direct_check_fast(board, move, own_idx, enemy_king_sq):
+                    continue
+                make_move(board, move)
+                score = -quiescence(board, -beta, -alpha, next_color, ply + 1, depth - 1)
+                unmake_move(board)
+
+                if score > best:
+                    best = score
+                if score > alpha:
+                    alpha = score
+                checks_searched += 1
+                if alpha >= beta:
+                    break
+                if checks_searched >= 3:
+                    break
+
     return best
 
 def choose_move(board, color, depth=5, alpha=-1000000, beta=1000000):
@@ -1361,3 +1392,28 @@ def _update_threat_tables(phase):
     _THREAT_BY_MINOR = [0.0, _s(5,32,phase), _s(55,41,phase), _s(55,41,phase), _s(76,76,phase), _s(76,76,phase), 0.0]
     _THREAT_BY_ROOK  = [0.0, _s(3,44,phase), _s(37,68,phase), _s(37,68,phase), 0.0, _s(42,60,phase), 0.0]
     _HANGING         = _s(69, 36, phase)
+
+
+
+
+def _gives_direct_check_fast(board, move, own_idx, enemy_king_sq):
+    piece = (move >> 12) & 0x7
+    promo = (move >> 19) & 0x7
+    if promo != NONE_PIECE:
+        piece = promo
+    if piece == KING:
+        return False
+    from_sq = move & 0x3F
+    to_sq = (move >> 6) & 0x3F
+    if piece == KNIGHT:
+        return bool(KNIGHT_ATTACKS[to_sq] & (1 << enemy_king_sq))
+    if piece == PAWN:
+        return bool(PAWN_ATTACKS[own_idx][to_sq] & (1 << enemy_king_sq))
+    occ_after = (board.all_occupancy & ~(1 << from_sq)) | (1 << to_sq)
+    if piece == BISHOP:
+        return bool(get_bishop_attacks(to_sq, occ_after) & (1 << enemy_king_sq))
+    if piece == ROOK:
+        return bool(get_rook_attacks(to_sq, occ_after) & (1 << enemy_king_sq))
+    if piece == QUEEN:
+        return bool(get_queen_attacks(to_sq, occ_after) & (1 << enemy_king_sq))
+    return False
