@@ -736,7 +736,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     corr_idx = None
     if in_check_now:
-        static_eval = STATIC_EVAL[ply - 1] if ply > 0 else 0.0
+        static_eval = -STATIC_EVAL[ply - 1] if ply > 0 else 0.0
     else:
         raw_eval = eval_cached(board) if color == "black" else -eval_cached(board)
         corr_idx = compute_pawn_hash(board) & CORR_HIST_MASK
