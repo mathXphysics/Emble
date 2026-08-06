@@ -72,7 +72,7 @@ def uci_loop():
         command = input().strip()
 
         if command == "uci":
-            print("id name Emble 6.4.9", flush=True)
+            print("id name Emble 6.4.10", flush=True)
             print("id author Malte Freiherr", flush=True)
             print("uciok", flush=True)
 

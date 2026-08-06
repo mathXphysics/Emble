@@ -803,10 +803,13 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             and tt_move is not None
             and idx != -1
             and TT_DEPTH[idx] >= depth - 3
+            and TT_BOUND[idx] != 2
             and ply > 0
             and abs(beta) < MATE_THRESHOLD
+            and abs(TT_SCORE[idx]) < MATE_THRESHOLD
     ):
-        singular_beta = beta - (0.5 + 0.1 * depth)
+        tt_score_local = score_from_tt(TT_SCORE[idx], ply)
+        singular_beta = tt_score_local - (0.5 + 0.1 * depth)
         reduced_depth = (depth - 1) // 2
         fail_high_count = 0
         mc_fail_high_count = 0
