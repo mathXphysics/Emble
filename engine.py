@@ -1230,8 +1230,8 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
             window_alpha = -1000000
             window_beta = 1000000
         else:
-            window_alpha = prev_score - 0.5
-            window_beta = prev_score + 0.5
+            window_alpha = prev_score - 0.6
+            window_beta = prev_score + 0.6
 
         move, score, node_fraction, coverage = choose_move(board, color, depth, window_alpha, window_beta)
 
