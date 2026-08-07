@@ -1,35 +1,33 @@
-import atexit
 import os
-import subprocess
 import sys
 
 import pygame
 
 from board import Board, WHITE, BLACK, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, NONE_PIECE, sq
 from moves import generate_legal_moves, make_move, is_in_check
+from engine import choose_move_iterative
+from book import get_book_move
 
 # ---------------------------------------------------------------------------
 # Konfiguration
 # ---------------------------------------------------------------------------
 
 ENGINE_COLOR = BLACK        # Engine spielt Schwarz, du spielst Weiss
-ENGINE_MOVETIME_MS = 21000   # Denkzeit der Engine pro Zug in Millisekunden
-
-# Engine laeuft mit demselben Python wie die GUI (kein externer Pfad noetig,
-# dadurch spaeter problemlos als eigenstaendige .exe buendelbar). Kostet
-# Geschwindigkeit gegenueber PyPy, spielt aber fuer Demo-Zwecke keine Rolle.
-ENGINE_EXECUTABLE = sys.executable
-UCI_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uci.py")
+ENGINE_TIME_LIMIT = 21    # Denkzeit der Engine pro Zug in Sekunden
 
 SQUARE_SIZE = 80
 BOARD_OFFSET = 30
 WINDOW_SIZE = SQUARE_SIZE * 8 + BOARD_OFFSET * 2
 
+BACKGROUND = (235, 235, 235)
 LIGHT = (222, 185, 126)
 DARK = (110, 63, 24)
 COLOR_LAST_MOVE = (255, 215, 0)
 COLOR_SELECTED = (60, 180, 60)
 COLOR_LEGAL_TARGET = (60, 120, 220)
+COLOR_HINT = (120, 120, 120)
+COLOR_ANALYSIS = (30, 90, 200)
+COLOR_COPY_OK = (30, 140, 30)
 
 LETTERS = ["a", "b", "c", "d", "e", "f", "g", "h"]
 
@@ -42,66 +40,28 @@ PIECE_SYMBOLS = {
 
 PROMOTION_OPTIONS = [QUEEN, ROOK, BISHOP, KNIGHT]
 PROMOTION_LABELS = ["Dame", "Turm", "Laeufer", "Springer"]
-PROMO_CHAR_TO_PIECE = {"q": QUEEN, "r": ROOK, "b": BISHOP, "n": KNIGHT}
 PIECE_TO_PROMO_CHAR = {QUEEN: "q", ROOK: "r", BISHOP: "b", KNIGHT: "n"}
 
 
 # ---------------------------------------------------------------------------
-# Engine-Prozess (PyPy) ueber UCI ansteuern -- pygame bleibt komplett in CPython
+# Engine direkt im selben Prozess ansteuern (kein Subprocess, kein UCI-Text-
+# protokoll noetig -- dadurch als EINE einzige .exe buendelbar).
 # ---------------------------------------------------------------------------
 
-class EngineProcess:
-    def __init__(self):
-        self.process = subprocess.Popen(
-            [ENGINE_EXECUTABLE, UCI_SCRIPT],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        self._send("uci")
-        self._read_until("uciok")
-        self._send("isready")
-        self._read_until("readyok")
+def color_to_str(color_const):
+    return "white" if color_const == WHITE else "black"
 
-    def _send(self, command):
-        self.process.stdin.write(command + "\n")
-        self.process.stdin.flush()
 
-    def _read_until(self, token):
-        lines = []
-        while True:
-            line = self.process.stdout.readline()
-            if line == "":
-                raise RuntimeError("Engine-Prozess wurde unerwartet beendet (PyPy-Pfad korrekt?).")
-            line = line.strip()
-            lines.append(line)
-            if line.startswith(token):
-                break
-        return lines
-
-    def best_move(self, moves_uci, movetime_ms):
-        position_cmd = "position startpos"
-        if moves_uci:
-            position_cmd += " moves " + " ".join(moves_uci)
-        self._send(position_cmd)
-        self._send(f"go movetime {movetime_ms}")
-        for line in self._read_until("bestmove"):
-            if line.startswith("bestmove"):
-                parts = line.split()
-                return parts[1] if len(parts) > 1 else None
-        return None
-
-    def quit(self):
-        try:
-            self._send("quit")
-        except (BrokenPipeError, OSError):
-            pass
-        self.process.terminate()
+def engine_choose_move(board):
+    ply_count = len(board.history)
+    book_move = get_book_move(board, ply_count)
+    if book_move is not None:
+        return book_move
+    return choose_move_iterative(board, color_to_str(board.side_to_move), time_limit=ENGINE_TIME_LIMIT)
 
 
 # ---------------------------------------------------------------------------
-# UCI-Notation <-> internes Zugformat
+# UCI-Notation (nur noch fuer den PGN-Export gebraucht)
 # ---------------------------------------------------------------------------
 
 def square_to_uci(square):
@@ -110,24 +70,14 @@ def square_to_uci(square):
     return file_char + rank_char
 
 
-def uci_to_square(uci_str):
-    file_index = ord(uci_str[0]) - ord('a')
-    rank_index = int(uci_str[1]) - 1
-    return sq(file_index, rank_index)
-
-
-def move_to_uci(from_sq, to_sq, promotion=None):
+def uci_of_move(move):
+    from_sq = move & 0x3F
+    to_sq = (move >> 6) & 0x3F
+    promo = (move >> 19) & 0x7
     result = square_to_uci(from_sq) + square_to_uci(to_sq)
-    if promotion is not None:
-        result += PIECE_TO_PROMO_CHAR[promotion]
+    if promo in PIECE_TO_PROMO_CHAR:
+        result += PIECE_TO_PROMO_CHAR[promo]
     return result
-
-
-def parse_uci_move(uci_str):
-    from_sq = uci_to_square(uci_str[0:2])
-    to_sq = uci_to_square(uci_str[2:4])
-    promotion = PROMO_CHAR_TO_PIECE.get(uci_str[4]) if len(uci_str) == 5 else None
-    return from_sq, to_sq, promotion
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +127,60 @@ def game_status(board):
     return "stalemate"
 
 
+def board_at_ply(move_ints_history, ply):
+    """Baut die Stellung nach den ersten `ply` Zuegen aus move_ints_history neu auf."""
+    b = Board()
+    for m in move_ints_history[:ply]:
+        make_move(b, m)
+    return b
+
+
+# ---------------------------------------------------------------------------
+# PGN-Export + Zwischenablage
+# ---------------------------------------------------------------------------
+
+def build_pgn(move_ints_history):
+    """Erzeugt einen PGN-String ueber python-chess. None, falls chess nicht installiert ist."""
+    try:
+        import chess
+        import chess.pgn
+    except ImportError:
+        return None
+
+    game = chess.pgn.Game()
+    game.headers["Event"] = "Emblium Partie"
+    node = game
+    cb_board = chess.Board()
+    for move_int in move_ints_history:
+        uci_str = uci_of_move(move_int)
+        move = cb_board.parse_uci(uci_str)
+        node = node.add_variation(move)
+        cb_board.push(move)
+    return str(game)
+
+
+def copy_to_clipboard(text):
+    try:
+        import tkinter
+        root = tkinter.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        root.destroy()
+        return True
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Zeichnen
 # ---------------------------------------------------------------------------
 
-def draw_board(window, board, font_piece, font_label, selected_sq, legal_targets, last_move, status_text):
+def draw_board(window, board, font_piece, font_label, selected_sq, legal_targets,
+               last_move, status_text, top_hint_text, top_hint_color, copy_message):
+    window.fill(BACKGROUND)
+
     for row_from_top in range(8):
         for file in range(8):
             rank = 7 - row_from_top
@@ -217,6 +216,14 @@ def draw_board(window, board, font_piece, font_label, selected_sq, legal_targets
         rank_number = str(8 - i)
         text = font_label.render(rank_number, True, (0, 0, 0))
         window.blit(text, (8, BOARD_OFFSET + i * SQUARE_SIZE + SQUARE_SIZE // 2 - 10))
+
+    if top_hint_text:
+        text = font_label.render(top_hint_text, True, top_hint_color)
+        window.blit(text, (BOARD_OFFSET, 5))
+
+    if copy_message:
+        text = font_label.render(copy_message, True, COLOR_COPY_OK)
+        window.blit(text, (BOARD_OFFSET, WINDOW_SIZE - 40))
 
     if status_text:
         text = font_label.render(status_text, True, (200, 0, 0))
@@ -260,23 +267,39 @@ def main():
     pygame.display.set_caption("Emblium")
 
     font_piece = pygame.font.SysFont("segoeuisymbol", 60)
-    font_label = pygame.font.SysFont("segoeuisymbol", 20)
+    font_label = pygame.font.SysFont("segoeuisymbol", 16)
 
-    engine = EngineProcess()
-    atexit.register(engine.quit)
+    live_board = Board()
+    move_ints_history = []
+    view_ply = 0
 
-    board = Board()
-    move_history_uci = []
     selected_sq = None
     legal_targets = []
-    last_move = None
     status_text = None
     game_over = False
+
+    copy_message = None
+    copy_message_until = 0
 
     clock = pygame.time.Clock()
 
     while True:
-        draw_board(window, board, font_piece, font_label, selected_sq, legal_targets, last_move, status_text)
+        is_live = (view_ply == len(move_ints_history))
+        display_board = live_board if is_live else board_at_ply(move_ints_history, view_ply)
+        last_move_display = move_ints_history[view_ply - 1] if view_ply > 0 else None
+
+        if copy_message and pygame.time.get_ticks() > copy_message_until:
+            copy_message = None
+
+        if is_live:
+            top_hint_text = "<- -> Zuege ansehen  |  C: PGN kopieren"
+            top_hint_color = COLOR_HINT
+        else:
+            top_hint_text = f"Analyse: Zug {view_ply}/{len(move_ints_history)}  |  -> zum Live-Stand"
+            top_hint_color = COLOR_ANALYSIS
+
+        draw_board(window, display_board, font_piece, font_label, selected_sq, legal_targets,
+                   last_move_display, status_text, top_hint_text, top_hint_color, copy_message)
         pygame.display.flip()
         clock.tick(60)
 
@@ -285,19 +308,41 @@ def main():
                 pygame.quit()
                 sys.exit()
 
-            if event.type == pygame.MOUSEBUTTONDOWN and not game_over:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_LEFT:
+                    view_ply = max(0, view_ply - 1)
+                    selected_sq = None
+                    legal_targets = []
+                elif event.key == pygame.K_RIGHT:
+                    view_ply = min(len(move_ints_history), view_ply + 1)
+                    selected_sq = None
+                    legal_targets = []
+                elif event.key == pygame.K_c:
+                    pgn_text = build_pgn(move_ints_history)
+                    if pgn_text is None:
+                        if move_ints_history:
+                            pgn_text = "startpos moves " + " ".join(uci_of_move(m) for m in move_ints_history)
+                        else:
+                            pgn_text = ""
+                    if pgn_text and copy_to_clipboard(pgn_text):
+                        copy_message = "In Zwischenablage kopiert"
+                    else:
+                        copy_message = "Kopieren fehlgeschlagen"
+                    copy_message_until = pygame.time.get_ticks() + 2000
+
+            if event.type == pygame.MOUSEBUTTONDOWN and not game_over and is_live:
                 clicked_sq = square_from_pixel(event.pos)
                 if clicked_sq is None:
                     continue
 
-                if board.side_to_move == ENGINE_COLOR:
+                if live_board.side_to_move == ENGINE_COLOR:
                     continue  # Engine ist am Zug, Klicks werden ignoriert
 
                 if selected_sq is None:
-                    piece_info = board.piece_at(clicked_sq)
-                    if piece_info is not None and piece_info[0] == board.side_to_move:
+                    piece_info = live_board.piece_at(clicked_sq)
+                    if piece_info is not None and piece_info[0] == live_board.side_to_move:
                         selected_sq = clicked_sq
-                        legal_targets = [(m >> 6) & 0x3F for m in legal_moves_from_square(board, clicked_sq)]
+                        legal_targets = [(m >> 6) & 0x3F for m in legal_moves_from_square(live_board, clicked_sq)]
                 else:
                     if clicked_sq == selected_sq:
                         selected_sq = None
@@ -305,69 +350,63 @@ def main():
                         continue
 
                     promotion = None
-                    if needs_promotion_choice(board, selected_sq, clicked_sq):
+                    if needs_promotion_choice(live_board, selected_sq, clicked_sq):
                         promotion = ask_promotion(window, font_label)
 
-                    move = find_move(board, selected_sq, clicked_sq, promotion)
+                    move = find_move(live_board, selected_sq, clicked_sq, promotion)
                     if move is not None:
-                        make_move(board, move)
-                        move_history_uci.append(move_to_uci(selected_sq, clicked_sq, promotion))
-                        last_move = move
+                        make_move(live_board, move)
+                        move_ints_history.append(move)
+                        view_ply = len(move_ints_history)
                         selected_sq = None
                         legal_targets = []
 
-                        status = game_status(board)
+                        status = game_status(live_board)
                         if status == "checkmate":
-                            winner = "Weiss" if board.side_to_move == BLACK else "Schwarz"
+                            winner = "Weiss" if live_board.side_to_move == BLACK else "Schwarz"
                             status_text = f"Schachmatt - {winner} gewinnt"
                             game_over = True
                         elif status == "stalemate":
                             status_text = "Patt - Unentschieden"
                             game_over = True
                     else:
-                        piece_info = board.piece_at(clicked_sq)
-                        if piece_info is not None and piece_info[0] == board.side_to_move:
+                        piece_info = live_board.piece_at(clicked_sq)
+                        if piece_info is not None and piece_info[0] == live_board.side_to_move:
                             selected_sq = clicked_sq
-                            legal_targets = [(m >> 6) & 0x3F for m in legal_moves_from_square(board, clicked_sq)]
+                            legal_targets = [(m >> 6) & 0x3F for m in legal_moves_from_square(live_board, clicked_sq)]
                         else:
                             selected_sq = None
                             legal_targets = []
 
-        if not game_over and board.side_to_move == ENGINE_COLOR:
-            status_text = "Engine denkt..."
-            draw_board(window, board, font_piece, font_label, selected_sq, legal_targets, last_move, status_text)
+        if not game_over and is_live and live_board.side_to_move == ENGINE_COLOR:
+            status_text = None
+            draw_board(window, live_board, font_piece, font_label, selected_sq, legal_targets,
+                       last_move_display, "Engine denkt...", top_hint_text, top_hint_color, copy_message)
             pygame.display.flip()
 
-            best_uci = engine.best_move(move_history_uci, ENGINE_MOVETIME_MS)
-            status_text = None
+            move = engine_choose_move(live_board)
 
-            if best_uci is None:
-                status = game_status(board)
+            if move is None:
+                status = game_status(live_board)
                 if status == "checkmate":
-                    winner = "Weiss" if board.side_to_move == BLACK else "Schwarz"
+                    winner = "Weiss" if live_board.side_to_move == BLACK else "Schwarz"
                     status_text = f"Schachmatt - {winner} gewinnt"
                 elif status == "stalemate":
                     status_text = "Patt - Unentschieden"
                 game_over = True
             else:
-                from_sq, to_sq, promotion = parse_uci_move(best_uci)
-                move = find_move(board, from_sq, to_sq, promotion)
-                if move is None:
-                    status_text = f"Engine-Zug ungueltig: {best_uci}"
-                    game_over = True
-                else:
-                    make_move(board, move)
-                    move_history_uci.append(best_uci)
-                    last_move = move
+                make_move(live_board, move)
+                move_ints_history.append(move)
+                view_ply = len(move_ints_history)
 
-                    status = game_status(board)
-                    if status == "checkmate":
-                        winner = "Weiss" if board.side_to_move == BLACK else "Schwarz"
-                        status_text = f"Schachmatt - {winner} gewinnt"
-                        game_over = True
-                    elif status == "stalemate":
-                        status_text = "Patt - Unentschieden"
-                        game_over = True
+                status = game_status(live_board)
+                if status == "checkmate":
+                    winner = "Weiss" if live_board.side_to_move == BLACK else "Schwarz"
+                    status_text = f"Schachmatt - {winner} gewinnt"
+                    game_over = True
+                elif status == "stalemate":
+                    status_text = "Patt - Unentschieden"
+                    game_over = True
 
 
 if __name__ == "__main__":
