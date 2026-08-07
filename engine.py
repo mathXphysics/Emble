@@ -969,6 +969,9 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] += depth * depth
                 for qf, qt in quiet_tried:
                     qpiece = quiet_tried_pieces.get((qf, qt), 0)
+                    HISTORY[qf][qt] -= depth * depth // 2
+                    if HISTORY[qf][qt] < -HISTORY_MAX:
+                        HISTORY[qf][qt] = -HISTORY_MAX
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
                     if prev_piece is not None:
                         CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] -= depth * depth // 2
