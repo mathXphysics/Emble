@@ -1211,6 +1211,7 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
         for t in range(64):
             for c in range(7):
                 CAPTURE_HISTORY[p][t][c] //= 2
+
     TT_GENERATION += 1
     SEARCH_ABORTED = False
     SEARCH_START = time.time()
