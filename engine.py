@@ -1216,6 +1216,7 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
     SEARCH_START = time.time()
     SEARCH_LIMIT = time_limit
     soft_limit = time_limit * 0.6
+    STATIC_EVAL[0] = eval_cached(board) if color == "black" else -eval_cached(board)
 
     best_move_overall = None
     prev_score = None
