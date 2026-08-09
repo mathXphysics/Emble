@@ -1159,6 +1159,8 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
 
     return best
 
+
+
 def choose_move(board, color, depth=5, alpha=-1000000, beta=1000000):
     global SEARCH_ABORTED, NODE_COUNT
     moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), 0)
