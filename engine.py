@@ -866,6 +866,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
         is_capture = captured_piece != NONE_PIECE or flag == EN_PASSANT
+        is_promotion = ((move >> 19) & 0x7) != NONE_PIECE
         from_sq_pv = move & 0x3F
         to_sq_pv = (move >> 6) & 0x3F
 
@@ -875,6 +876,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 and not in_check_now
                 and not is_pv
                 and not is_capture
+                and not is_promotion
                 and move != tt_move
         ):
             lmp_limit = (4 + 4 * depth) if improving else (2 + 2 * depth)
@@ -904,6 +906,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 and not in_check_now
                 and not is_pv
                 and not is_capture
+                and not is_promotion
                 and not skip_futility
         ):
             futility_margin = 1.0 + 1.5 * depth
@@ -935,6 +938,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     move_index >= 3
                     and new_depth >= 2
                     and not is_capture
+                    and not is_promotion
                     and not in_check_now
                     and not is_killer
             )
