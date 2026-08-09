@@ -51,6 +51,7 @@ HISTORY = [[0 for _ in range(64)] for _ in range(64)]
 
 CONT_HISTORY = [[0 for _ in range(64)] for _ in range(13)]
 CONT_HIST_PREV = [[[[0 for _ in range(64)] for _ in range(7)] for _ in range(64)] for _ in range(7)]
+CONT_HIST_PREV2 = [[[[0 for _ in range(64)] for _ in range(7)] for _ in range(64)] for _ in range(7)]
 
 CAPTURE_HISTORY = [[[0 for _ in range(7)] for _ in range(64)] for _ in range(6)]
 
@@ -596,7 +597,7 @@ def gives_check(board, move):
     unmake_move(board)
     return result
 
-def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, prev_to=None):
+def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, prev_to=None,prev_piece2=None, prev_to2=None):
     if captured_piece != NONE_PIECE or flag == EN_PASSANT:
         see_value = SEE(board, move)
         to_sq = (move >> 6) & 0x3F
@@ -625,6 +626,8 @@ def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, p
     cont = CONT_HISTORY[piece][to_sq] if piece is not None else 0
     if prev_piece is not None:
         cont += CONT_HIST_PREV[prev_piece][prev_to][piece][to_sq]
+    if prev_piece2 is not None:
+        cont += CONT_HIST_PREV2[prev_piece2][prev_to2][piece][to_sq]
     total = HISTORY[from_sq][to_sq] + cont
     if total > HISTORY_MAX:
         total = HISTORY_MAX
@@ -632,8 +635,7 @@ def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, p
         total = -HISTORY_MAX
     return total, None
 
-
-def ordered_moves(board, moves_list, ply, prev_piece=None, prev_to=None):
+def ordered_moves(board, moves_list, ply, prev_piece=None, prev_to=None, prev_piece2=None, prev_to2=None):
     scored = []
     append = scored.append
     see_cache = {}
@@ -641,7 +643,7 @@ def ordered_moves(board, moves_list, ply, prev_piece=None, prev_to=None):
         piece = (move >> 12) & 0x7
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
-        s, see_value = move_score(move, ply, board, piece, captured_piece, flag, prev_piece, prev_to)
+        s, see_value = move_score(move, ply, board, piece, captured_piece, flag, prev_piece, prev_to,prev_piece2, prev_to2)
         if see_value is not None:
             see_cache[move] = see_value
         append((s, move))
@@ -697,7 +699,10 @@ def unmake_null_move(board):
     board.ep_square = old_ep
     board.side_to_move = opposite(board.side_to_move)
 
-def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_node=False, prev_move=None):
+
+
+
+def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_node=False, prev_move=None,prev_move2=None):
     alpha_orig = alpha
     global NODE_COUNT, SEARCH_ABORTED
     NODE_COUNT += 1
@@ -707,6 +712,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
     is_pv = (beta - alpha) > 1
     prev_piece = (prev_move >> 12) & 0x7 if prev_move is not None else None
     prev_to = (prev_move >> 6) & 0x3F if prev_move is not None else None
+    prev_piece2 = (prev_move2 >> 12) & 0x7 if prev_move2 is not None else None
+    prev_to2 = (prev_move2 >> 6) & 0x3F if prev_move2 is not None else None
 
     if board.halfmove_clock >= 100:
         return 0
@@ -786,7 +793,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
     if depth == 0:
         return quiescence(board, alpha, beta, color, ply)
 
-    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), ply, prev_piece, prev_to)
+    moves_list, see_cache = ordered_moves(board, generate_legal_moves(board), ply, prev_piece, prev_to, prev_piece2, prev_to2)
 
     if not moves_list:
         if in_check_now:
@@ -914,7 +921,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
         if move_index == 0:
             score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False,
-                                    prev_move=move)
+                                    prev_move=move, prev_move2=prev_move)
         else:
             killer0 = KILLER[ply][0]
             killer1 = KILLER[ply][1]
@@ -946,10 +953,10 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 reduced_depth = new_depth
 
             score_result = -negamax(board, reduced_depth, next_color, -alpha - 1, -alpha,
-                                    ply=ply + 1, cut_node=True, prev_move=move)
+                                    ply=ply + 1, cut_node=True, prev_move=move, prev_move2=prev_move)
             if score_result > alpha:
                 score_result = -negamax(board, new_depth, next_color, -beta, -alpha,
-                                        ply=ply + 1, cut_node=False, prev_move=move)
+                                        ply=ply + 1, cut_node=False, prev_move=move, prev_move2=prev_move)
 
         unmake_move(board)
 
@@ -977,6 +984,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     CONT_HISTORY[piece_moved][to_sq] = HISTORY_MAX
                 if prev_piece is not None:
                     CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] += depth * depth
+                if prev_piece2 is not None:
+                    CONT_HIST_PREV2[prev_piece2][prev_to2][piece_moved][to_sq] += depth * depth
                 for qf, qt in quiet_tried:
                     qpiece = quiet_tried_pieces.get((qf, qt), 0)
                     HISTORY[qf][qt] -= depth * depth // 2
@@ -985,6 +994,8 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
                     if prev_piece is not None:
                         CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] -= depth * depth // 2
+                    if prev_piece2 is not None:
+                        CONT_HIST_PREV2[prev_piece2][prev_to2][qpiece][qt] -= depth * depth // 2
             else:
                 to_sq = (move >> 6) & 0x3F
                 piece_moved = (move >> 12) & 0x7
@@ -1224,6 +1235,11 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
             for p in range(7):
                 for t in range(64):
                     CONT_HIST_PREV[pp][pt][p][t] //= 2
+    for pp in range(7):
+        for pt in range(64):
+            for p in range(7):
+                for t in range(64):
+                    CONT_HIST_PREV2[pp][pt][p][t] //= 2
     for p in range(6):
         for t in range(64):
             for c in range(7):
