@@ -80,6 +80,8 @@ MATE_THRESHOLD = MATE_VALUE - 1000
 
 HISTORY_MAX = 500000
 
+MVV_LVA_VALUE = {PAWN: 1, KNIGHT: 3, BISHOP: 3, ROOK: 5, QUEEN: 9, KING: 0}
+
 thinking_time = 21
 SEARCH_ABORTED = False
 
@@ -605,12 +607,13 @@ def move_score(move, ply, board, piece, captured_piece, flag, prev_piece=None, p
         elif cap_hist < -HISTORY_MAX:
             cap_hist = -HISTORY_MAX
         cap_bonus = cap_hist / 5000.0
+        mvv_lva_bonus = (MVV_LVA_VALUE[captured_type] * 10 - MVV_LVA_VALUE[piece]) / 1000000.0
         if see_value > 0:
-            return 900000 + see_value + cap_bonus, see_value
+            return 900000 + see_value + cap_bonus + mvv_lva_bonus, see_value
         elif see_value == 0:
-            return 800000 + cap_bonus, see_value
+            return 800000 + cap_bonus + mvv_lva_bonus, see_value
         else:
-            return -100000 + see_value + cap_bonus, see_value
+            return -100000 + see_value + cap_bonus + mvv_lva_bonus, see_value
     killer0 = KILLER[ply][0]
     killer1 = KILLER[ply][1]
     from_sq = move & 0x3F
@@ -888,12 +891,19 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 move_index += 1
                 continue
 
-        if move_index > 0 and depth <= 3 and not in_check_now and not is_pv and not is_capture and not skip_futility:
+        if (
+                move_index > 0
+                and depth <= 3
+                and not in_check_now
+                and not is_pv
+                and not is_capture
+                and not skip_futility
+        ):
             futility_margin = 1.0 + 1.5 * depth
             if futility_stand_pat + futility_margin < alpha:
                 move_index += 1
                 continue
-                
+
         make_move(board, move)
         new_depth = depth - 1
         gives_check_now = is_in_check(board, board.side_to_move)
@@ -1072,12 +1082,19 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
     for move in candidate_moves:
         captured_piece = (move >> 16) & 0x7
         flag = (move >> 22) & 0x7
-        see_value = SEE(board, move) if captured_piece != NONE_PIECE or flag == EN_PASSANT else 800000
-        append((see_value, move))
-    capture_moves.sort(key=lambda t: t[0], reverse=True)
+        is_real_capture = captured_piece != NONE_PIECE or flag == EN_PASSANT
+        see_value = SEE(board, move) if is_real_capture else 800000
+        if is_real_capture:
+            piece_moved = (move >> 12) & 0x7
+            captured_type = PAWN if flag == EN_PASSANT else captured_piece
+            mvv_lva_value = MVV_LVA_VALUE[captured_type] * 10 - MVV_LVA_VALUE[piece_moved]
+        else:
+            mvv_lva_value = 0
+        append((see_value, mvv_lva_value, move))
+    capture_moves.sort(key=lambda t: (t[0], t[1]), reverse=True)
 
     best = stand_pat
-    for see_value, move in capture_moves:
+    for see_value, _, move in capture_moves:
         if see_value < 0:
             continue
         captured_piece = (move >> 16) & 0x7
