@@ -844,7 +844,10 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 extension = 2 if (singular_beta - best_alt_score) > 1.5 else 1
             if not is_pv and cut_node and mc_fail_high_count >= MULTICUT_THRESHOLD:
                 return beta
-            if tested >= MULTICUT_MAX_MOVES and fail_high_count > 0:
+            multicut_possible = not is_pv and cut_node
+            if fail_high_count > 0 and not multicut_possible:
+                break
+            if tested >= MULTICUT_MAX_MOVES:
                 break
 
     best_score = -9999999
@@ -1041,6 +1044,10 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     return best_score
 
+
+
+
+
 def quiescence(board, alpha, beta, color, ply, depth=10):
     global NODE_COUNT
     NODE_COUNT += 1
@@ -1049,6 +1056,10 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
     in_check_now = is_in_check(board, own_idx)
 
     if time.time() - SEARCH_START > SEARCH_LIMIT:
+        eval_value = eval_cached(board)
+        return eval_value if color == "black" else -eval_value
+
+    if ply >= 127:
         eval_value = eval_cached(board)
         return eval_value if color == "black" else -eval_value
 
@@ -1085,6 +1096,8 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
     stand_pat = eval_cached(board)
     if color != "black":
         stand_pat = -stand_pat
+    corr_idx_qs = compute_pawn_hash(board) & CORR_HIST_MASK
+    stand_pat += CORRECTION_HISTORY[own_idx][corr_idx_qs]
 
     if stand_pat >= beta:
         return stand_pat
