@@ -1292,13 +1292,22 @@ def choose_move_iterative(board, color, max_depth=99, time_limit=thinking_time, 
             window_alpha = -1000000
             window_beta = 1000000
         else:
-            window_alpha = prev_score - 0.6
-            window_beta = prev_score + 0.6
+            aspiration_delta = 0.6
+            window_alpha = prev_score - aspiration_delta
+            window_beta = prev_score + aspiration_delta
 
         move, score, node_fraction, coverage = choose_move(board, color, depth, window_alpha, window_beta)
 
-        if move is not None and (score <= window_alpha or score >= window_beta):
-            move, score, node_fraction, coverage = choose_move(board, color, depth, -1000000, 1000000)
+        while move is not None and (score <= window_alpha or score >= window_beta):
+            if score <= window_alpha:
+                window_alpha = max(-1000000, window_alpha - aspiration_delta)
+            if score >= window_beta:
+                window_beta = min(1000000, window_beta + aspiration_delta)
+            aspiration_delta *= 2
+            if window_alpha <= -1000000 and window_beta >= 1000000:
+                move, score, node_fraction, coverage = choose_move(board, color, depth, -1000000, 1000000)
+                break
+            move, score, node_fraction, coverage = choose_move(board, color, depth, window_alpha, window_beta)
         if debug or depth_debug:
             print(f"Tiefe {depth} abgeschlossen | Bester Zug: {move} | Score: {score}", file=sys.stderr)
 
