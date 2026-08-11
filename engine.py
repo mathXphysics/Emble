@@ -892,18 +892,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             if move_index >= lmp_limit:
                 move_index += 1
                 continue
-
-        if (
-                move_index > 0
-                and depth <= 5
-                and not in_check_now
-                and not is_pv
-                and not is_capture
-                and not is_promotion
-                and move != tt_move
-        ):
-            history_pruning_threshold = -depth * 400
-            if HISTORY[from_sq_pv][to_sq_pv] < history_pruning_threshold:
+            if depth <= 5 and HISTORY[from_sq_pv][to_sq_pv] < -depth * 400:
                 move_index += 1
                 continue
 
@@ -955,9 +944,12 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         if gives_check_now and ply < 64 and new_ext_count < MAX_EXTENSIONS:
             new_depth += 1
             new_ext_count += 1
-        if move_index == 0 and extension > 0 and new_ext_count < MAX_EXTENSIONS:
-            new_depth += extension
-            new_ext_count += 1
+        if move_index == 0:
+            if extension > 0 and new_ext_count < MAX_EXTENSIONS:
+                new_depth += extension
+                new_ext_count += 1
+            elif negative_extension:
+                new_depth -= 1
 
         if move_index == 0:
             score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False,
