@@ -840,7 +840,13 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 fail_high_count += 1
                 extension = 0
             elif fail_high_count == 0:
-                extension = 2 if (singular_beta - best_alt_score) > 1.5 else 1
+                singularity_margin = singular_beta - best_alt_score
+                if not is_pv and singularity_margin > 3.0:
+                    extension = 3
+                elif singularity_margin > 1.5:
+                    extension = 2
+                else:
+                    extension = 1
             if not is_pv and cut_node and mc_fail_high_count >= MULTICUT_THRESHOLD:
                 return beta
             if fail_high_count > 0 and mc_fail_high_count < MULTICUT_THRESHOLD:
