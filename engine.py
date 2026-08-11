@@ -699,10 +699,7 @@ def unmake_null_move(board):
     board.ep_square = old_ep
     board.side_to_move = opposite(board.side_to_move)
 
-
-
-
-def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_node=False, prev_move=None,prev_move2=None):
+def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_node=False, prev_move=None, prev_move2=None, ext_count=0):
     alpha_orig = alpha
     global NODE_COUNT, SEARCH_ABORTED
     NODE_COUNT += 1
@@ -775,7 +772,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         r = min(3, depth // 3 + 1)
         make_null_move(board)
         null_score = -negamax(board, depth - 1 - r, next_color, -beta, -beta + 1,
-                              is_null_move=True, ply=ply + 1, cut_node=True)
+                              is_null_move=True, ply=ply + 1, cut_node=True, ext_count=ext_count)
         unmake_null_move(board)
         if null_score >= beta:
             return beta
@@ -809,6 +806,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
     extension = 0
     negative_extension = False
+    MAX_EXTENSIONS = 16
     if (
             depth >= 6
             and tt_move is not None
@@ -832,7 +830,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             tested += 1
             make_move(board, alt_move)
             alt_score = -negamax(board, reduced_depth, next_color, -singular_beta - 1, -singular_beta,
-                                 ply=ply + 1, cut_node=True)
+                                 ply=ply + 1, cut_node=True, ext_count=ext_count)
             unmake_move(board)
             if alt_score > best_alt_score:
                 best_alt_score = alt_score
@@ -922,17 +920,17 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
         make_move(board, move)
         new_depth = depth - 1
         gives_check_now = is_in_check(board, board.side_to_move)
-        if gives_check_now and ply < 64:
+        new_ext_count = ext_count
+        if gives_check_now and ply < 64 and new_ext_count < MAX_EXTENSIONS:
             new_depth += 1
-        if move_index == 0:
-            if extension > 0:
-                new_depth += extension
-            elif negative_extension:
-                new_depth -= 1
+            new_ext_count += 1
+        if move_index == 0 and extension > 0 and new_ext_count < MAX_EXTENSIONS:
+            new_depth += extension
+            new_ext_count += 1
 
         if move_index == 0:
             score_result = -negamax(board, new_depth, next_color, -beta, -alpha, ply=ply + 1, cut_node=False,
-                                    prev_move=move, prev_move2=prev_move)
+                                    prev_move=move, prev_move2=prev_move, ext_count=new_ext_count)
         else:
             killer0 = KILLER[ply][0]
             killer1 = KILLER[ply][1]
@@ -965,10 +963,12 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                 reduced_depth = new_depth
 
             score_result = -negamax(board, reduced_depth, next_color, -alpha - 1, -alpha,
-                                    ply=ply + 1, cut_node=True, prev_move=move, prev_move2=prev_move)
+                                    ply=ply + 1, cut_node=True, prev_move=move, prev_move2=prev_move,
+                                    ext_count=new_ext_count)
             if score_result > alpha:
                 score_result = -negamax(board, new_depth, next_color, -beta, -alpha,
-                                        ply=ply + 1, cut_node=False, prev_move=move, prev_move2=prev_move)
+                                        ply=ply + 1, cut_node=False, prev_move=move, prev_move2=prev_move,
+                                        ext_count=new_ext_count)
 
         unmake_move(board)
 
