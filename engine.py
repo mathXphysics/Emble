@@ -905,6 +905,20 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
 
         if (
                 move_index > 0
+                and depth <= 6
+                and not is_capture
+                and not is_promotion
+                and not in_check_now
+                and not is_pv
+                and move != tt_move
+        ):
+            quiet_see_margin = -1.0 * depth
+            if SEE_quiet(board, move) < quiet_see_margin:
+                move_index += 1
+                continue
+
+        if (
+                move_index > 0
                 and depth <= 3
                 and not in_check_now
                 and not is_pv
@@ -1495,3 +1509,56 @@ def _gives_direct_check_fast(board, move, own_idx, enemy_king_sq):
     if piece == QUEEN:
         return bool(get_queen_attacks(to_sq, occ_after) & (1 << enemy_king_sq))
     return False
+
+
+
+
+
+def SEE_quiet(board, move):
+    from_sq = move & 0x3F
+    to_sq = (move >> 6) & 0x3F
+    promotion = (move >> 19) & 0x7
+
+    attacker_side = board.color_at[from_sq]
+    attacker_type = board.piece_at_sq[from_sq]
+
+    occ = board.all_occupancy & ~(1 << from_sq)
+
+    diag = (board.bitboards[WHITE][BISHOP] | board.bitboards[WHITE][QUEEN] |
+            board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN])
+    straight = (board.bitboards[WHITE][ROOK] | board.bitboards[WHITE][QUEEN] |
+                board.bitboards[BLACK][ROOK] | board.bitboards[BLACK][QUEEN])
+
+    static_attackers = (
+        (PAWN_ATTACKS[WHITE][to_sq] & board.bitboards[BLACK][PAWN]) |
+        (PAWN_ATTACKS[BLACK][to_sq] & board.bitboards[WHITE][PAWN]) |
+        (KNIGHT_ATTACKS[to_sq] & (board.bitboards[WHITE][KNIGHT] | board.bitboards[BLACK][KNIGHT])) |
+        (KING_ATTACKS[to_sq] & (board.bitboards[WHITE][KING] | board.bitboards[BLACK][KING]))
+    )
+
+    def _sliding_attackers(cur_occ):
+        masked_b = cur_occ & BISHOP_MASKS[to_sq]
+        idx_b = ((masked_b * BISHOP_MAGICS[to_sq]) & FULL) >> BISHOP_SHIFTS[to_sq]
+        masked_r = cur_occ & ROOK_MASKS[to_sq]
+        idx_r = ((masked_r * ROOK_MAGICS[to_sq]) & FULL) >> ROOK_SHIFTS[to_sq]
+        return ((BISHOP_TABLES[to_sq][idx_b] & diag) | (ROOK_TABLES[to_sq][idx_r] & straight)) & cur_occ
+
+    gains = [0]
+    piece_on_square_value = piece_value[promotion] if promotion != NONE_PIECE else piece_value[attacker_type]
+    side = opposite(attacker_side)
+    attackers_bb = (static_attackers & occ) | _sliding_attackers(occ)
+
+    while True:
+        sq_att, pt_att = _least_valuable_attacker(board, attackers_bb, side)
+        if sq_att is None:
+            break
+        gains.append(piece_on_square_value - gains[-1])
+        occ &= ~(1 << sq_att)
+        attackers_bb = (static_attackers & occ) | _sliding_attackers(occ)
+        piece_on_square_value = piece_value[pt_att]
+        side = opposite(side)
+
+    for i in range(len(gains) - 1, 0, -1):
+        gains[i - 1] = -max(-gains[i - 1], gains[i])
+
+    return gains[0]
