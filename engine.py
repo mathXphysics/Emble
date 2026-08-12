@@ -1019,18 +1019,28 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
                     CONT_HISTORY[piece_moved][to_sq] = HISTORY_MAX
                 if prev_piece is not None:
                     CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] += depth * depth
+                    if CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] > HISTORY_MAX:
+                        CONT_HIST_PREV[prev_piece][prev_to][piece_moved][to_sq] = HISTORY_MAX
                 if prev_piece2 is not None:
                     CONT_HIST_PREV2[prev_piece2][prev_to2][piece_moved][to_sq] += depth * depth
+                    if CONT_HIST_PREV2[prev_piece2][prev_to2][piece_moved][to_sq] > HISTORY_MAX:
+                        CONT_HIST_PREV2[prev_piece2][prev_to2][piece_moved][to_sq] = HISTORY_MAX
                 for qf, qt in quiet_tried:
                     qpiece = quiet_tried_pieces.get((qf, qt), 0)
                     HISTORY[qf][qt] -= depth * depth // 2
                     if HISTORY[qf][qt] < -HISTORY_MAX:
                         HISTORY[qf][qt] = -HISTORY_MAX
                     CONT_HISTORY[qpiece][qt] -= depth * depth // 2
+                    if CONT_HISTORY[qpiece][qt] < -HISTORY_MAX:
+                        CONT_HISTORY[qpiece][qt] = -HISTORY_MAX
                     if prev_piece is not None:
                         CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] -= depth * depth // 2
+                        if CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] < -HISTORY_MAX:
+                            CONT_HIST_PREV[prev_piece][prev_to][qpiece][qt] = -HISTORY_MAX
                     if prev_piece2 is not None:
                         CONT_HIST_PREV2[prev_piece2][prev_to2][qpiece][qt] -= depth * depth // 2
+                        if CONT_HIST_PREV2[prev_piece2][prev_to2][qpiece][qt] < -HISTORY_MAX:
+                            CONT_HIST_PREV2[prev_piece2][prev_to2][qpiece][qt] = -HISTORY_MAX
             else:
                 to_sq = (move >> 6) & 0x3F
                 piece_moved = (move >> 12) & 0x7
