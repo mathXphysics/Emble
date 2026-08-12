@@ -759,7 +759,7 @@ def negamax(board, depth, color, alpha, beta, is_null_move=False, ply=0, cut_nod
             and abs(alpha) < MATE_THRESHOLD
             and abs(beta) < MATE_THRESHOLD
     ):
-        rfp_margin = (1.3 if improving else 0.9) * depth
+        rfp_margin = (0.9 if improving else 1.3) * depth
         if static_eval - rfp_margin >= beta:
             return static_eval
 
