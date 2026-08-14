@@ -1188,6 +1188,7 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
             enemy_king_sq = lsb_index(enemy_king_bb)
             candidates_scanned = 0
             checks_searched = 0
+            check_futility_margin = 0.5
             for move in generate_legal_moves(board):
                 captured_piece_qc = (move >> 16) & 0x7
                 flag_qc = (move >> 22) & 0x7
@@ -1197,6 +1198,8 @@ def quiescence(board, alpha, beta, color, ply, depth=10):
                     break
                 candidates_scanned += 1
                 if not _gives_direct_check_fast(board, move, own_idx, enemy_king_sq):
+                    continue
+                if stand_pat + check_futility_margin <= alpha:
                     continue
                 make_move(board, move)
                 score = -quiescence(board, -beta, -alpha, next_color, ply + 1, depth - 1)
