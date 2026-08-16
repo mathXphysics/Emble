@@ -28,6 +28,8 @@ import pstats
 
 import math
 
+import weights as W
+
 
 TT_SIZE_BITS = 22
 TT_SIZE = 1 << TT_SIZE_BITS
@@ -97,6 +99,8 @@ for _d in range(1, 64):
 def _has_pawn(board, color, rank, file):
     return (board.bitboards[color][PAWN] >> sq(file, rank)) & 1
 
+
+
 def bewerte_material(board):
     phase = board.phase
     if phase > 24: phase = 24
@@ -114,6 +118,27 @@ def bewerte_material(board):
         return total_material
 
     material = 0.0
+
+    passed_base        = W.w("PASSED_BASE", phase)
+    passed_rank_sq      = W.w("PASSED_RANK_SQ", phase)
+    passed_unstoppable  = W.w("PASSED_UNSTOPPABLE", phase)
+    bishop_pair         = W.w("BISHOP_PAIR", phase)
+    eg_king_edge        = W.w("EG_KING_EDGE_DIST", phase)
+    eg_king_dist        = W.w("EG_KING_DIST", phase)
+    doubled_pawn        = W.w("DOUBLED_PAWN", phase)
+    isolated_pawn       = W.w("ISOLATED_PAWN", phase)
+    undeveloped_minor   = W.w("UNDEVELOPED_MINOR", phase)
+    king_shield_full    = W.w("KING_SHIELD_FULL_PT", phase)
+    king_shield_half    = W.w("KING_SHIELD_HALF_PT", phase)
+    king_shield_weight  = W.w("KING_SHIELD_WEIGHT", phase)
+    king_center_file    = W.w("KING_CENTER_FILE", phase)
+    king_file_open      = W.w("KING_FILE_OPEN", phase)
+    king_file_semi_open = W.w("KING_FILE_SEMI_OPEN", phase)
+    king_zone_major     = W.w("KING_ZONE_MAJOR_ATTACK", phase)
+    rook_open_file      = W.w("ROOK_OPEN_FILE", phase)
+    rook_semi_open_file = W.w("ROOK_SEMI_OPEN_FILE", phase)
+    rook_on_7th         = W.w("ROOK_ON_7TH", phase)
+    mobility_w          = W.w("MOBILITY", phase)
 
     white_pawn_bb = board.bitboards[WHITE][PAWN]
     black_pawn_bb = board.bitboards[BLACK][PAWN]
@@ -169,9 +194,9 @@ def bewerte_material(board):
         if (PASSED_PAWN_MASK_WHITE[s] & black_pawn_bb) == 0:
             rank = s >> 3
             file = s & 7
-            material -= 0.2 + (rank * rank) * 0.03
+            material -= passed_base + (rank * rank) * passed_rank_sq
             if max(abs(bk_rank - 7), abs(bk_file - file)) > (7 - rank) + (0 if board.side_to_move == BLACK else 1):
-                material -= 0.5
+                material -= passed_unstoppable
 
     bb = black_pawn_bb
     while bb:
@@ -180,52 +205,52 @@ def bewerte_material(board):
         if (PASSED_PAWN_MASK_BLACK[s] & white_pawn_bb) == 0:
             rank = s >> 3
             file = s & 7
-            material += 0.2 + ((7 - rank) * (7 - rank)) * 0.03
+            material += passed_base + ((7 - rank) * (7 - rank)) * passed_rank_sq
             if max(abs(wk_rank - 0), abs(wk_file - file)) > rank + (0 if board.side_to_move == WHITE else 1):
-                material += 0.5
+                material += passed_unstoppable
 
     if (board.bitboards[WHITE][BISHOP]).bit_count() >= 2:
-        material -= 0.3
+        material -= bishop_pair
     if (board.bitboards[BLACK][BISHOP]).bit_count() >= 2:
-        material += 0.3
+        material += bishop_pair
 
     if piece_count <= 6 and abs(total_material) >= 3:
         if total_material < 0:
             edge_dist = min(bk_rank, 7 - bk_rank, bk_file, 7 - bk_file)
             king_dist = max(abs(wk_rank - bk_rank), abs(wk_file - bk_file))
-            material -= (3 - edge_dist) * 0.1 + (7 - king_dist) * 0.05
+            material -= (3 - edge_dist) * eg_king_edge + (7 - king_dist) * eg_king_dist
         elif total_material > 0:
             edge_dist = min(wk_rank, 7 - wk_rank, wk_file, 7 - wk_file)
             king_dist = max(abs(bk_rank - wk_rank), abs(bk_file - wk_file))
-            material += (3 - edge_dist) * 0.1 + (7 - king_dist) * 0.05
+            material += (3 - edge_dist) * eg_king_edge + (7 - king_dist) * eg_king_dist
 
     for file in range(8):
         wpc = white_pawns_per_col[file]
         bpc = black_pawns_per_col[file]
         if wpc >= 2:
-            material += 0.3 * (wpc - 1)
+            material += doubled_pawn * (wpc - 1)
         if bpc >= 2:
-            material -= 0.3 * (bpc - 1)
+            material -= doubled_pawn * (bpc - 1)
         if wpc > 0:
             left  = white_pawns_per_col[file - 1] if file > 0 else 0
             right = white_pawns_per_col[file + 1] if file < 7 else 0
             if left == 0 and right == 0:
-                material += 0.2 * wpc
+                material += isolated_pawn * wpc
         if bpc > 0:
             left  = black_pawns_per_col[file - 1] if file > 0 else 0
             right = black_pawns_per_col[file + 1] if file < 7 else 0
             if left == 0 and right == 0:
-                material -= 0.2 * bpc
+                material -= isolated_pawn * bpc
 
     if piece_count > 6:
-        if (board.bitboards[WHITE][KNIGHT] >> sq(1, 0)) & 1: material += 0.1
-        if (board.bitboards[WHITE][KNIGHT] >> sq(6, 0)) & 1: material += 0.1
-        if (board.bitboards[WHITE][BISHOP] >> sq(2, 0)) & 1: material += 0.1
-        if (board.bitboards[WHITE][BISHOP] >> sq(5, 0)) & 1: material += 0.1
-        if (board.bitboards[BLACK][KNIGHT] >> sq(1, 7)) & 1: material -= 0.1
-        if (board.bitboards[BLACK][KNIGHT] >> sq(6, 7)) & 1: material -= 0.1
-        if (board.bitboards[BLACK][BISHOP] >> sq(2, 7)) & 1: material -= 0.1
-        if (board.bitboards[BLACK][BISHOP] >> sq(5, 7)) & 1: material -= 0.1
+        if (board.bitboards[WHITE][KNIGHT] >> sq(1, 0)) & 1: material += undeveloped_minor
+        if (board.bitboards[WHITE][KNIGHT] >> sq(6, 0)) & 1: material += undeveloped_minor
+        if (board.bitboards[WHITE][BISHOP] >> sq(2, 0)) & 1: material += undeveloped_minor
+        if (board.bitboards[WHITE][BISHOP] >> sq(5, 0)) & 1: material += undeveloped_minor
+        if (board.bitboards[BLACK][KNIGHT] >> sq(1, 7)) & 1: material -= undeveloped_minor
+        if (board.bitboards[BLACK][KNIGHT] >> sq(6, 7)) & 1: material -= undeveloped_minor
+        if (board.bitboards[BLACK][BISHOP] >> sq(2, 7)) & 1: material -= undeveloped_minor
+        if (board.bitboards[BLACK][BISHOP] >> sq(5, 7)) & 1: material -= undeveloped_minor
 
         white_king_safety = 0.0
         black_king_safety = 0.0
@@ -233,31 +258,31 @@ def bewerte_material(board):
             c = wk_file + dc
             if 0 <= c <= 7:
                 if wk_rank + 1 <= 7 and (white_pawn_bb >> sq(c, wk_rank + 1)) & 1:
-                    white_king_safety += 1.0
+                    white_king_safety += king_shield_full
                 elif wk_rank + 2 <= 7 and (white_pawn_bb >> sq(c, wk_rank + 2)) & 1:
-                    white_king_safety += 0.5
+                    white_king_safety += king_shield_half
             c = bk_file + dc
             if 0 <= c <= 7:
                 if bk_rank - 1 >= 0 and (black_pawn_bb >> sq(c, bk_rank - 1)) & 1:
-                    black_king_safety += 1.0
+                    black_king_safety += king_shield_full
                 elif bk_rank - 2 >= 0 and (black_pawn_bb >> sq(c, bk_rank - 2)) & 1:
-                    black_king_safety += 0.5
+                    black_king_safety += king_shield_half
 
-        material -= white_king_safety * 0.25
-        material += black_king_safety * 0.25
+        material -= white_king_safety * king_shield_weight
+        material += black_king_safety * king_shield_weight
 
-        if 3 <= wk_file <= 4: material += 0.3
-        if 3 <= bk_file <= 4: material -= 0.3
+        if 3 <= wk_file <= 4: material += king_center_file
+        if 3 <= bk_file <= 4: material -= king_center_file
 
         for dc in (-1, 0, 1):
             c = wk_file + dc
             if 0 <= c <= 7:
                 if white_pawns_per_col[c] == 0:
-                    material += 0.2 if black_pawns_per_col[c] == 0 else 0.1
+                    material += king_file_open if black_pawns_per_col[c] == 0 else king_file_semi_open
             c = bk_file + dc
             if 0 <= c <= 7:
                 if black_pawns_per_col[c] == 0:
-                    material -= 0.2 if white_pawns_per_col[c] == 0 else 0.1
+                    material -= king_file_open if white_pawns_per_col[c] == 0 else king_file_semi_open
 
         straight_enemy_b = board.bitboards[BLACK][ROOK]  | board.bitboards[BLACK][QUEEN]
         diag_enemy_b     = board.bitboards[BLACK][BISHOP] | board.bitboards[BLACK][QUEEN]
@@ -269,8 +294,8 @@ def bewerte_material(board):
         white_major_attackers  = bool(get_rook_attacks(black_king_pos, occ) & straight_enemy_w)
         white_major_attackers += bool(get_bishop_attacks(black_king_pos, occ) & diag_enemy_w)
 
-        material += black_major_attackers * 0.4
-        material -= white_major_attackers * 0.4
+        material += black_major_attackers * king_zone_major
+        material -= white_major_attackers * king_zone_major
 
     white_mobility = 0
     black_mobility = 0
@@ -283,9 +308,9 @@ def bewerte_material(board):
         atk = get_rook_attacks(s, occ)
         white_mobility += (atk & ~w_occ).bit_count()
         if white_pawns_per_col[f] == 0:
-            material -= 0.2 if black_pawns_per_col[f] == 0 else 0.1
+            material -= rook_open_file if black_pawns_per_col[f] == 0 else rook_semi_open_file
         if (s >> 3) == 6:
-            material -= 0.3
+            material -= rook_on_7th
 
     bb = board.bitboards[BLACK][ROOK]
     while bb:
@@ -295,9 +320,9 @@ def bewerte_material(board):
         atk = get_rook_attacks(s, occ)
         black_mobility += (atk & ~b_occ).bit_count()
         if black_pawns_per_col[f] == 0:
-            material += 0.2 if white_pawns_per_col[f] == 0 else 0.1
+            material += rook_open_file if white_pawns_per_col[f] == 0 else rook_semi_open_file
         if (s >> 3) == 1:
-            material += 0.3
+            material += rook_on_7th
 
     bb = board.bitboards[WHITE][KNIGHT]
     while bb:
@@ -335,13 +360,13 @@ def bewerte_material(board):
         bb &= bb - 1
         black_mobility += (get_queen_attacks(s, occ) & ~b_occ).bit_count()
 
-    material -= white_mobility * 0.02
-    material += black_mobility * 0.02
+    material -= white_mobility * mobility_w
+    material += black_mobility * mobility_w
 
-    OUTPOST_BONUS_KNIGHT = _s(54, 34, phase)
-    OUTPOST_BONUS_BISHOP = _s(31, 25, phase)
-    REACHABLE_OUTPOST_KNIGHT = _s(31, 23, phase)
-    REACHABLE_OUTPOST_BISHOP = _s(22, 10, phase)
+    OUTPOST_BONUS_KNIGHT = W.w("OUTPOST_KNIGHT", phase)
+    OUTPOST_BONUS_BISHOP = W.w("OUTPOST_BISHOP", phase)
+    REACHABLE_OUTPOST_KNIGHT = W.w("REACHABLE_OUTPOST_KNIGHT", phase)
+    REACHABLE_OUTPOST_BISHOP = W.w("REACHABLE_OUTPOST_BISHOP", phase)
 
     white_outpost_squares = 0
     bb = white_pawn_bb
@@ -502,7 +527,7 @@ def bewerte_material(board):
     material += (w_occ & ~white_defended & black_atk_all).bit_count() * _HANGING
     material -= (b_occ & ~black_defended & white_atk_all).bit_count() * _HANGING
 
-    TEMPO = _s(28, 0, phase)
+    TEMPO = W.w("TEMPO", phase)
     if board.side_to_move == WHITE:
         material -= TEMPO
     else:
